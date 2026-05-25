@@ -13,61 +13,68 @@
             min-height: 100vh;
             padding: 16px;
         }
-        .question-box {
+
+        /* экран ввода ФИО */
+        .name-screen {
             background: white;
             border-radius: 12px;
-            padding: 16px;
-            margin-bottom: 16px;
-            font-size: 16px;
-            font-weight: bold;
-            color: #222;
+            padding: 24px;
+            text-align: center;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+        }
+        .name-screen h2 { font-size: 20px; margin-bottom: 8px; }
+        .name-screen p { color: gray; font-size: 14px; margin-bottom: 20px; }
+        .name-input {
+            width: 100%; padding: 14px;
+            border: 2px solid #ddd; border-radius: 10px;
+            font-size: 16px; margin-bottom: 16px;
+            outline: none;
+        }
+        .name-input:focus { border-color: #1a73e8; }
+        .start-btn {
+            width: 100%; padding: 14px;
+            background: #1a73e8; color: white;
+            border: none; border-radius: 10px;
+            font-size: 16px; cursor: pointer;
+        }
+        .start-btn:disabled { background: #ccc; cursor: default; }
+
+        /* тест */
+        .question-box {
+            background: white; border-radius: 12px;
+            padding: 16px; margin-bottom: 16px;
+            font-size: 16px; font-weight: bold;
             box-shadow: 0 1px 4px rgba(0,0,0,0.1);
         }
         .option {
             display: block; width: 100%;
-            background: white;
-            border: 1.5px solid #e0e0e0;
-            border-radius: 12px;
-            padding: 14px 16px;
-            margin-bottom: 10px;
-            font-size: 14px;
-            color: #1a73e8;
-            cursor: pointer;
-            text-align: left;
-            transition: all 0.2s;
+            background: white; border: 1.5px solid #e0e0e0;
+            border-radius: 12px; padding: 14px 16px;
+            margin-bottom: 10px; font-size: 14px;
+            color: #1a73e8; cursor: pointer; text-align: left;
         }
         .option:hover { border-color: #1a73e8; background: #f0f6ff; }
         .option.correct { border-color: #4caf50; background: #e8f5e9; color: #2e7d32; }
         .option.wrong { border-color: #f44336; background: #ffebee; color: #c62828; }
         .option.disabled { cursor: default; }
 
-        /* навигация */
         .nav-grid {
             display: grid;
             grid-template-columns: repeat(10, 1fr);
-            gap: 6px;
-            margin-top: 20px;
+            gap: 6px; margin-top: 20px;
         }
         .nav-btn {
-            aspect-ratio: 1;
-            border: 1.5px solid #ddd;
-            border-radius: 8px;
-            background: white;
-            font-size: 13px;
-            cursor: pointer;
-            color: #333;
+            aspect-ratio: 1; border: 1.5px solid #ddd;
+            border-radius: 8px; background: white;
+            font-size: 13px; cursor: pointer; color: #333;
         }
         .nav-btn.active { border-color: #1a73e8; color: #1a73e8; font-weight: bold; }
         .nav-btn.answered { background: #e8f5e9; border-color: #4caf50; }
         .nav-btn.wrong-ans { background: #ffebee; border-color: #f44336; }
 
-        /* результат */
         .result {
-            display: none;
-            background: white;
-            border-radius: 12px;
-            padding: 24px;
-            text-align: center;
+            display: none; background: white;
+            border-radius: 12px; padding: 24px; text-align: center;
         }
         .score-big { font-size: 56px; font-weight: bold; color: #1a73e8; }
         .grade-text { font-size: 22px; margin: 10px 0; }
@@ -81,31 +88,54 @@
 </head>
 <body>
 
-<div id="quiz">
+<!-- Экран ввода ФИО -->
+<div id="nameScreen">
+    <div class="name-screen">
+        <h2>🎓 Testga xush kelibsiz!</h2>
+        <p>Boshlash uchun FISHingizni kiriting</p>
+        <input
+            type="text"
+            class="name-input"
+            id="nameInput"
+            placeholder="Familiya Ism Sharif"
+            oninput="checkName()"
+        />
+        <button class="start-btn" id="startBtn" onclick="startQuiz()" disabled>
+            ▶️ Testni boshlash
+        </button>
+    </div>
+</div>
+
+<!-- Тест -->
+<div id="quiz" style="display:none;">
     <div class="question-box" id="question"></div>
     <div id="options"></div>
     <div class="nav-grid" id="nav"></div>
 </div>
 
+<!-- Результат -->
 <div class="result" id="result">
     <div class="score-big" id="score"></div>
     <div class="grade-text" id="grade"></div>
     <p id="details" style="color:gray; margin-top:8px;"></p>
-    <button class="send-btn" onclick="sendResult()">✅ Yuborish</button>
+    <p id="studentName" style="margin-top:8px; font-weight:bold;"></p>
+    <button class="send-btn" onclick="sendResult()">✅ Natijani yuborish</button>
 </div>
 
 <script>
 const tg = window.Telegram.WebApp;
 tg.expand();
 
-// ===== САВОЛЛАР =====
+let studentName = "";
+
+// ===== ВОПРОСЫ =====
 const questions = [
     {
         question: "Zarb mexanizmlari turlarini ayting?",
         options: [
             "Yuqoridan uruvchi, haydagich zarb qutisi ustida gorizontal joylashgan",
             "Pastdan uruvchi, yurituvchi bo'g'in uning past qismiga ta'sir qiladi",
-            "Pastki qismdan uruvchi, haydagich vertikal tekislikda joylashgan, yurituvchi bo'g'in uning past qismiga ta'sir qiladi",
+            "Pastki qismdan uruvchi, haydagich vertikal tekislikda joylashgan",
             "Oldingi qismidan uruvchi, yurituvchi bo'g'in uning o'rta qismiga ta'sir qiladi"
         ],
         answer: 0
@@ -125,11 +155,22 @@ const questions = [
         ],
         answer: 0
     }
-    // ← qo'shimcha savollar shu yerga qo'shing
 ];
 
 let current = 0;
 let userAnswers = new Array(questions.length).fill(null);
+
+function checkName() {
+    const val = document.getElementById("nameInput").value.trim();
+    document.getElementById("startBtn").disabled = val.length < 3;
+}
+
+function startQuiz() {
+    studentName = document.getElementById("nameInput").value.trim();
+    document.getElementById("nameScreen").style.display = "none";
+    document.getElementById("quiz").style.display = "block";
+    showQuestion();
+}
 
 function renderNav() {
     const nav = document.getElementById("nav");
@@ -140,11 +181,7 @@ function renderNav() {
         btn.textContent = i + 1;
         if (i === current) btn.classList.add("active");
         if (userAnswers[i] !== null) {
-            if (userAnswers[i] === questions[i].answer) {
-                btn.classList.add("answered");
-            } else {
-                btn.classList.add("wrong-ans");
-            }
+            btn.classList.add(userAnswers[i] === questions[i].answer ? "answered" : "wrong-ans");
         }
         btn.onclick = () => { current = i; showQuestion(); };
         nav.appendChild(btn);
@@ -153,8 +190,7 @@ function renderNav() {
 
 function showQuestion() {
     const q = questions[current];
-    document.getElementById("question").textContent =
-        `${current + 1}. ${q.question}`;
+    document.getElementById("question").textContent = `${current + 1}. ${q.question}`;
 
     const optionsDiv = document.getElementById("options");
     optionsDiv.innerHTML = "";
@@ -163,8 +199,6 @@ function showQuestion() {
         const btn = document.createElement("button");
         btn.className = "option";
         btn.textContent = opt;
-
-        // если уже отвечен
         if (userAnswers[current] !== null) {
             btn.classList.add("disabled");
             btn.disabled = true;
@@ -221,13 +255,17 @@ function showResult() {
     document.getElementById("score").textContent = `${correct}/${total}`;
     document.getElementById("grade").textContent = grade;
     document.getElementById("details").textContent = `To'g'ri javoblar: ${pct}%`;
+    document.getElementById("studentName").textContent = `👤 ${studentName}`;
 }
 
 function sendResult() {
     const correct = userAnswers.filter((a, i) => a === questions[i].answer).length;
     const total = questions.length;
     const pct = Math.round((correct / total) * 100);
-    tg.sendData(JSON.stringify({ correct, total, percent: pct }));
+    tg.sendData(JSON.stringify({
+        correct, total, percent: pct,
+        name: studentName
+    }));
 }
 
 showQuestion();
