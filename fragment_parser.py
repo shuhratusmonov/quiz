@@ -25,9 +25,11 @@ import asyncio
 import argparse
 import json
 import re
+import sqlite3
 import sys
-from dataclasses import dataclass
-from typing import Optional, List
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Optional, List, Tuple
 
 # ─── Цвета ───────────────────────────────────────────────────────────────────
 GREEN  = "\033[32m"
@@ -75,6 +77,8 @@ class StarGift:
     xgift: Optional[float]        # оценка xgift
     seller: str                   # @username продавца
     buy_url: str = ""             # ссылка для кнопки (опционально)
+    avg_stars: Optional[float] = None   # среднее за последние N продаж
+    avg_count: int = 0                  # сколько продаж учтено в среднем
 
     @staticmethod
     def parse(text: str) -> "StarGift":
@@ -119,6 +123,85 @@ class StarGift:
             seller=seller,
             buy_url=buy_url,
         )
+
+
+# ─── История цен ─────────────────────────────────────────────────────────────
+
+class PriceHistory:
+    """SQLite-хранилище истории цен подарков.
+    Файл gift_prices.db создаётся автоматически рядом со скриптом.
+    """
+
+    DEFAULT_DB = "gift_prices.db"
+
+    def __init__(self, db_path: str = DEFAULT_DB):
+        self.db_path = db_path
+        self._init()
+
+    def _init(self):
+        with sqlite3.connect(self.db_path) as c:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS gift_prices (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    model       TEXT    NOT NULL,
+                    stars_price INTEGER,
+                    ton_price   REAL,
+                    seller      TEXT,
+                    recorded_at TEXT    DEFAULT (datetime('now','localtime'))
+                )
+            """)
+            c.execute("CREATE INDEX IF NOT EXISTS idx_model ON gift_prices(model)")
+            c.commit()
+
+    def record(self, gift: "StarGift"):
+        """Сохраняет текущую цену в историю."""
+        if gift.stars_price is None and gift.ton_price is None:
+            return
+        with sqlite3.connect(self.db_path) as c:
+            c.execute(
+                "INSERT INTO gift_prices (model, stars_price, ton_price, seller) "
+                "VALUES (?, ?, ?, ?)",
+                (gift.model.strip(), gift.stars_price, gift.ton_price, gift.seller),
+            )
+            c.commit()
+
+    def last_n(self, model: str, n: int = 10) -> List[Tuple[int, str]]:
+        """Возвращает последние N записей (stars_price, recorded_at) для модели."""
+        with sqlite3.connect(self.db_path) as c:
+            rows = c.execute(
+                "SELECT stars_price, recorded_at FROM gift_prices "
+                "WHERE model = ? AND stars_price IS NOT NULL "
+                "ORDER BY id DESC LIMIT ?",
+                (model.strip(), n),
+            ).fetchall()
+        return rows  # [(stars, date), ...]
+
+    def avg_stars(self, model: str, n: int = 10) -> Tuple[Optional[float], int]:
+        """Среднее арифметическое Stars по последним N продажам.
+        Возвращает (среднее, кол-во учтённых записей).
+        """
+        rows = self.last_n(model, n)
+        prices = [r[0] for r in rows if r[0] is not None]
+        if not prices:
+            return None, 0
+        return sum(prices) / len(prices), len(prices)
+
+    def enrich(self, gift: "StarGift", n: int = 10) -> "StarGift":
+        """Вычисляет среднее и записывает его в gift.avg_stars / avg_count.
+        Вызывать ДО record(), чтобы текущая цена не вошла в среднее.
+        """
+        avg, count = self.avg_stars(gift.model, n)
+        gift.avg_stars = avg
+        gift.avg_count = count
+        return gift
+
+    def total(self, model: str) -> int:
+        """Общее кол-во записей для модели."""
+        with sqlite3.connect(self.db_path) as c:
+            row = c.execute(
+                "SELECT COUNT(*) FROM gift_prices WHERE model = ?", (model.strip(),)
+            ).fetchone()
+        return row[0] if row else 0
 
 
 KIND_LABEL = {"username": "USERNAME", "number": "НОМЕР", "gift": "ПОДАРОК"}
@@ -454,6 +537,21 @@ class TelegramNotifier:
             lines.append(f"📊  Xgift   •   <b>{g.xgift}</b>")
         if g.seller:
             lines.append(f"👤  Продавец:   <b>{g.seller}</b>")
+
+        # Средняя цена по истории
+        if g.avg_stars is not None and g.avg_count > 0:
+            delta_str = ""
+            if g.stars_price is not None:
+                delta = g.stars_price - g.avg_stars
+                sign = "+" if delta >= 0 else "−"
+                delta_str = f"  ({sign}{abs(delta):.0f} ⭐ от среднего)"
+            lines.append(
+                f"📈  Ср. цена:   <b>{g.avg_stars:.0f} ⭐</b>"
+                f"  <i>по {g.avg_count} прод.{delta_str}</i>"
+            )
+        elif g.avg_count == 0:
+            lines.append(f"📈  Ср. цена:   <i>нет данных (первая запись)</i>")
+
         if g.buy_url:
             lines += ["", f'🔗 <a href="{g.buy_url}">Смотреть подарок</a>']
         return "\n".join(lines)
@@ -650,6 +748,8 @@ async def main():
                         help="Текст подарка для разовой отправки в канал")
     manual.add_argument("--buy-url", default="", metavar="URL",
                         help="Ссылка на подарок (кнопка 'Купить')")
+    manual.add_argument("--db-path", default=PriceHistory.DEFAULT_DB, metavar="FILE",
+                        help=f"Файл истории цен SQLite (default: {PriceHistory.DEFAULT_DB})")
 
     args = ap.parse_args()
 
@@ -688,6 +788,12 @@ async def main():
         gift = StarGift.parse(args.send_gift)
         if args.buy_url:
             gift.buy_url = args.buy_url
+
+        # История цен
+        history = PriceHistory(args.db_path)
+        history.enrich(gift, n=10)   # считаем среднее ДО записи текущей
+        history.record(gift)          # сохраняем текущую цену
+
         print(f"\n{BOLD}Подарок для отправки:{RESET}")
         print(f"  Модель:    {gift.model or '—'}")
         print(f"  Рарность:  {gift.rarity}%" if gift.rarity else "  Рарность:  —")
@@ -697,6 +803,10 @@ async def main():
         print(f"  Xgift:     {gift.xgift}" if gift.xgift else "")
         print(f"  Продавец:  {gift.seller or '—'}")
         print(f"  Ссылка:    {gift.buy_url or '—'}")
+        if gift.avg_stars is not None:
+            print(f"  Ср. цена:  {gift.avg_stars:.0f} ⭐  по {gift.avg_count} прод.")
+        else:
+            print(f"  Ср. цена:  нет данных (первая запись)")
         print(f"\n{BOLD}Отправка в {args.channel}...{RESET}")
         ok = await notifier.send_star_gift(gift)
         if ok:
