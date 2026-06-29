@@ -15,6 +15,10 @@
   python3 fragment_parser.py --min-price 50          # от 50 TON
   python3 fragment_parser.py --status auction        # только аукционы
   python3 fragment_parser.py --no-browser            # лёгкий режим (httpx)
+
+Отправка подарков в Telegram-канал:
+  python3 fragment_parser.py --type gifts --token BOT_TOKEN --channel @mychannel
+  python3 fragment_parser.py --type gifts --token BOT_TOKEN --channel -1001234567890 --max 5
 """
 
 import asyncio
@@ -331,6 +335,91 @@ class HttpParser:
         return self._extract_from_html(html, "gift", max_items)
 
 
+# ─── Telegram-уведомления ────────────────────────────────────────────────────
+
+GIFT_EMOJI = {
+    "for_sale": "🟢",
+    "auction": "🔶",
+    "sold": "🔴",
+}
+
+STATUS_RU = {"for_sale": "Продажа", "auction": "Аукцион", "sold": "Продано"}
+
+
+class TelegramNotifier:
+    """Отправляет объявления о подарках в Telegram-канал через Bot API."""
+
+    API = "https://api.telegram.org/bot{token}/{method}"
+
+    def __init__(self, token: str, channel: str):
+        self.token = token
+        self.channel = channel  # @channelusername или -100xxxxxxx
+
+    def _url(self, method: str) -> str:
+        return self.API.format(token=self.token, method=method)
+
+    @staticmethod
+    def _format_gift(lst: Listing) -> str:
+        emoji = GIFT_EMOJI.get(lst.status, "🎁")
+        status = STATUS_RU.get(lst.status, lst.status)
+        price = f"{lst.price_ton:.2f} TON" if lst.price_ton is not None else "N/A"
+        lines = [
+            f"🎁 <b>{lst.title}</b>",
+            "",
+            f"💎 Цена: <b>{price}</b>",
+            f"{emoji} Статус: {status}",
+        ]
+        if lst.bids:
+            lines.append(f"🏷 Ставок: {lst.bids}")
+        if lst.ends_at:
+            lines.append(f"⏰ До: {lst.ends_at}")
+        lines += ["", f'🔗 <a href="{lst.url}">Смотреть на Fragment</a>']
+        return "\n".join(lines)
+
+    @staticmethod
+    def _buy_button(url: str) -> dict:
+        return {
+            "inline_keyboard": [[
+                {"text": "🛒 Купить на Fragment", "url": url}
+            ]]
+        }
+
+    async def send(self, listing: Listing) -> bool:
+        """Отправляет одно объявление. Возвращает True при успехе."""
+        import httpx
+        payload = {
+            "chat_id": self.channel,
+            "text": self._format_gift(listing),
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+            "reply_markup": json.dumps(self._buy_button(listing.url)),
+        }
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(self._url("sendMessage"), json=payload)
+            data = resp.json()
+            if not data.get("ok"):
+                print(f"  {RED}TG API ошибка: {data.get('description', resp.text)}{RESET}")
+                return False
+            return True
+        except Exception as exc:
+            print(f"  {RED}Ошибка отправки: {exc}{RESET}")
+            return False
+
+    async def send_all(self, listings: List[Listing], delay: float = 0.5) -> int:
+        """Отправляет список объявлений с задержкой между сообщениями.
+        Возвращает количество успешно отправленных."""
+        sent = 0
+        for lst in listings:
+            ok = await self.send(lst)
+            if ok:
+                sent += 1
+                print(f"  {GREEN}✓{RESET} Отправлено: {lst.title}")
+            if delay and lst is not listings[-1]:
+                await asyncio.sleep(delay)
+        return sent
+
+
 # ─── Вывод ───────────────────────────────────────────────────────────────────
 
 def _try_rich_table(listings: List[Listing], section: str):
@@ -423,6 +512,15 @@ async def main():
                     default=None, help="Фильтр по статусу")
     ap.add_argument("--no-browser", action="store_true",
                     help="Не использовать браузер (httpx, быстрее но менее надёжно)")
+
+    tg = ap.add_argument_group("Telegram-канал (только для --type gifts или all)")
+    tg.add_argument("--token", default="", metavar="BOT_TOKEN",
+                    help="Токен бота (получить у @BotFather)")
+    tg.add_argument("--channel", default="", metavar="CHANNEL",
+                    help="ID или @username канала (бот должен быть администратором)")
+    tg.add_argument("--delay", type=float, default=0.5, metavar="SEC",
+                    help="Пауза между сообщениями в секундах (default: 0.5)")
+
     args = ap.parse_args()
 
     print(f"\n{BOLD}Fragment.com Marketplace Parser{RESET}")
@@ -437,7 +535,20 @@ async def main():
         parts.append(f"статус={args.status}")
     mode = "httpx (без браузера)" if args.no_browser else "Playwright (браузер)"
     parts.append(f"режим={mode}")
+    if args.token and args.channel:
+        parts.append(f"→ {args.channel}")
     print("  " + " | ".join(parts) + "\n")
+
+    # Валидация Telegram-параметров
+    notifier: Optional[TelegramNotifier] = None
+    if args.token or args.channel:
+        if not args.token:
+            print(f"{RED}Ошибка: укажите --token BOT_TOKEN{RESET}")
+            sys.exit(1)
+        if not args.channel:
+            print(f"{RED}Ошибка: укажите --channel @username или ID{RESET}")
+            sys.exit(1)
+        notifier = TelegramNotifier(token=args.token, channel=args.channel)
 
     sections = (["usernames", "numbers", "gifts"] if args.type == "all"
                 else [args.type])
@@ -466,6 +577,14 @@ async def main():
             filtered = apply_filters(raw, args.min_price, args.max_price, args.status)
             print_results(filtered, section_labels[section])
             total += len(filtered)
+
+            # Отправка подарков в канал
+            if notifier and section == "gifts" and filtered:
+                gifts_only = [l for l in filtered if l.kind == "gift"]
+                if gifts_only:
+                    print(f"\n{BOLD}Отправка в {args.channel}...{RESET}")
+                    sent = await notifier.send_all(gifts_only, delay=args.delay)
+                    print(f"  Отправлено {sent}/{len(gifts_only)} сообщений.\n")
 
         if len(sections) > 1:
             print(f"\n  {BOLD}Всего: {total} объявлений{RESET}\n")
