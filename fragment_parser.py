@@ -64,6 +64,63 @@ class Listing:
     ends_at: Optional[str] = None
 
 
+@dataclass
+class StarGift:
+    """Подарок из внутреннего рынка Telegram Stars."""
+    model: str
+    rarity: Optional[float]       # процент редкости, напр. 3.0
+    backdrop: str
+    stars_price: Optional[int]    # цена в Stars ⭐
+    ton_price: Optional[float]    # примерная цена в TON
+    xgift: Optional[float]        # оценка xgift
+    seller: str                   # @username продавца
+    buy_url: str = ""             # ссылка для кнопки (опционально)
+
+    @staticmethod
+    def parse(text: str) -> "StarGift":
+        """Парсит текст в формате:
+            Model:  Ocean Oasis
+            рарность:  3.0%
+            Backdrop:  Lemongrass
+            цена:  540 ⭐  ≈ 4.71 TON
+            Xgift  •  5.16
+            продавец:  @Rrrruiojg
+        """
+        def find(pattern: str) -> str:
+            m = re.search(pattern, text, re.IGNORECASE)
+            return m.group(1).strip() if m else ""
+
+        model    = find(r"Model\s*[:\•]\s*(.+)")
+        backdrop = find(r"Backdrop\s*[:\•]\s*(.+)")
+        seller   = find(r"продав\w*\s*[:\•]\s*(@\S+)")
+
+        rarity_raw = find(r"рар\w*\s*[:\•]\s*([\d.]+)\s*%")
+        rarity = float(rarity_raw) if rarity_raw else None
+
+        stars_raw = find(r"цена\s*[:\•]\s*([\d\s]+)\s*[⭐✨]")
+        stars_price = int(re.sub(r"\D", "", stars_raw)) if stars_raw else None
+
+        ton_raw = find(r"≈\s*([\d.]+)\s*TON")
+        ton_price = float(ton_raw) if ton_raw else None
+
+        xgift_raw = find(r"[Xx]gift\s*[•·:]\s*([\d.]+)")
+        xgift = float(xgift_raw) if xgift_raw else None
+
+        # Ссылка на подарок — если передана в тексте
+        buy_url = find(r"(https?://\S+)")
+
+        return StarGift(
+            model=model,
+            rarity=rarity,
+            backdrop=backdrop,
+            stars_price=stars_price,
+            ton_price=ton_price,
+            xgift=xgift,
+            seller=seller,
+            buy_url=buy_url,
+        )
+
+
 KIND_LABEL = {"username": "USERNAME", "number": "НОМЕР", "gift": "ПОДАРОК"}
 STATUS_LABEL = {"for_sale": "ПРОДАЖА", "auction": "АУКЦИОН", "sold": "ПРОДАНО"}
 STATUS_COLOR = {"for_sale": GREEN, "auction": YELLOW, "sold": RED}
@@ -358,8 +415,52 @@ class TelegramNotifier:
     def _url(self, method: str) -> str:
         return self.API.format(token=self.token, method=method)
 
+    # ── Форматтеры ────────────────────────────────────────────────────────────
+
     @staticmethod
-    def _format_gift(lst: Listing) -> str:
+    def _format_star_gift(g: "StarGift") -> str:
+        """Форматирует StarGift в красивое Telegram-сообщение."""
+        rarity_str = f"{g.rarity}%" if g.rarity is not None else "—"
+        # Значок редкости по проценту
+        if g.rarity is not None:
+            if g.rarity <= 1.0:
+                rarity_icon = "💎"   # легендарный
+            elif g.rarity <= 5.0:
+                rarity_icon = "🔥"   # редкий
+            elif g.rarity <= 15.0:
+                rarity_icon = "⭐"   # необычный
+            else:
+                rarity_icon = "🎯"   # обычный
+
+        price_str = ""
+        if g.stars_price is not None:
+            price_str = f"{g.stars_price} ⭐"
+            if g.ton_price is not None:
+                price_str += f"  ≈  {g.ton_price:.2f} TON"
+        elif g.ton_price is not None:
+            price_str = f"{g.ton_price:.2f} TON"
+        else:
+            price_str = "—"
+
+        lines = [
+            f"🎁 <b>{g.model}</b>",
+            "",
+            f"🖼  Model:       <b>{g.model}</b>",
+            f"{rarity_icon}  Рарность:   <b>{rarity_str}</b>",
+            f"🎨  Backdrop:    <b>{g.backdrop}</b>",
+            f"💰  Цена:        <b>{price_str}</b>",
+        ]
+        if g.xgift is not None:
+            lines.append(f"📊  Xgift   •   <b>{g.xgift}</b>")
+        if g.seller:
+            lines.append(f"👤  Продавец:   <b>{g.seller}</b>")
+        if g.buy_url:
+            lines += ["", f'🔗 <a href="{g.buy_url}">Смотреть подарок</a>']
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_fragment_gift(lst: "Listing") -> str:
+        """Форматирует Fragment.com Listing для канала."""
         emoji = GIFT_EMOJI.get(lst.status, "🎁")
         status = STATUS_RU.get(lst.status, lst.status)
         price = f"{lst.price_ton:.2f} TON" if lst.price_ton is not None else "N/A"
@@ -377,41 +478,61 @@ class TelegramNotifier:
         return "\n".join(lines)
 
     @staticmethod
-    def _buy_button(url: str) -> dict:
-        return {
-            "inline_keyboard": [[
-                {"text": "🛒 Купить на Fragment", "url": url}
-            ]]
-        }
+    def _inline_button(text: str, url: str) -> dict:
+        return {"inline_keyboard": [[{"text": text, "url": url}]]}
 
-    async def send(self, listing: Listing) -> bool:
-        """Отправляет одно объявление. Возвращает True при успехе."""
+    # ── Отправка ──────────────────────────────────────────────────────────────
+
+    async def _send_message(self, text: str, reply_markup: dict = None) -> bool:
         import httpx
-        payload = {
+        payload: dict = {
             "chat_id": self.channel,
-            "text": self._format_gift(listing),
+            "text": text,
             "parse_mode": "HTML",
             "disable_web_page_preview": True,
-            "reply_markup": json.dumps(self._buy_button(listing.url)),
         }
+        if reply_markup:
+            payload["reply_markup"] = json.dumps(reply_markup)
         try:
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.post(self._url("sendMessage"), json=payload)
             data = resp.json()
             if not data.get("ok"):
-                print(f"  {RED}TG API ошибка: {data.get('description', resp.text)}{RESET}")
+                print(f"  {RED}TG API: {data.get('description', resp.text)}{RESET}")
                 return False
             return True
         except Exception as exc:
-            print(f"  {RED}Ошибка отправки: {exc}{RESET}")
+            print(f"  {RED}Ошибка: {exc}{RESET}")
             return False
 
-    async def send_all(self, listings: List[Listing], delay: float = 0.5) -> int:
-        """Отправляет список объявлений с задержкой между сообщениями.
-        Возвращает количество успешно отправленных."""
+    async def send_star_gift(self, gift: "StarGift") -> bool:
+        """Отправляет StarGift (внутренний рынок TG) в канал."""
+        markup = None
+        if gift.buy_url:
+            markup = self._inline_button("🛒 Купить", gift.buy_url)
+        return await self._send_message(self._format_star_gift(gift), markup)
+
+    async def send_fragment_gift(self, listing: "Listing") -> bool:
+        """Отправляет Fragment.com подарок в канал."""
+        markup = self._inline_button("🛒 Купить на Fragment", listing.url)
+        return await self._send_message(self._format_fragment_gift(listing), markup)
+
+    async def send_all_star_gifts(self, gifts: List["StarGift"], delay: float = 0.5) -> int:
+        sent = 0
+        for g in gifts:
+            ok = await self.send_star_gift(g)
+            if ok:
+                sent += 1
+                print(f"  {GREEN}✓{RESET} Отправлено: {g.model}")
+            if delay and g is not gifts[-1]:
+                await asyncio.sleep(delay)
+        return sent
+
+    async def send_all(self, listings: List["Listing"], delay: float = 0.5) -> int:
+        """Отправляет список Fragment-объявлений."""
         sent = 0
         for lst in listings:
-            ok = await self.send(lst)
+            ok = await self.send_fragment_gift(lst)
             if ok:
                 sent += 1
                 print(f"  {GREEN}✓{RESET} Отправлено: {lst.title}")
@@ -513,13 +634,22 @@ async def main():
     ap.add_argument("--no-browser", action="store_true",
                     help="Не использовать браузер (httpx, быстрее но менее надёжно)")
 
-    tg = ap.add_argument_group("Telegram-канал (только для --type gifts или all)")
+    tg = ap.add_argument_group("Telegram-канал")
     tg.add_argument("--token", default="", metavar="BOT_TOKEN",
                     help="Токен бота (получить у @BotFather)")
     tg.add_argument("--channel", default="", metavar="CHANNEL",
                     help="ID или @username канала (бот должен быть администратором)")
     tg.add_argument("--delay", type=float, default=0.5, metavar="SEC",
                     help="Пауза между сообщениями в секундах (default: 0.5)")
+
+    manual = ap.add_argument_group(
+        "Ручная отправка одного подарка (--send-gift)",
+        "Принимает текст в формате: Model / рарность / Backdrop / цена / Xgift / продавец"
+    )
+    manual.add_argument("--send-gift", default="", metavar="TEXT",
+                        help="Текст подарка для разовой отправки в канал")
+    manual.add_argument("--buy-url", default="", metavar="URL",
+                        help="Ссылка на подарок (кнопка 'Купить')")
 
     args = ap.parse_args()
 
@@ -541,7 +671,7 @@ async def main():
 
     # Валидация Telegram-параметров
     notifier: Optional[TelegramNotifier] = None
-    if args.token or args.channel:
+    if args.token or args.channel or args.send_gift:
         if not args.token:
             print(f"{RED}Ошибка: укажите --token BOT_TOKEN{RESET}")
             sys.exit(1)
@@ -549,6 +679,29 @@ async def main():
             print(f"{RED}Ошибка: укажите --channel @username или ID{RESET}")
             sys.exit(1)
         notifier = TelegramNotifier(token=args.token, channel=args.channel)
+
+    # ── Режим ручной отправки одного подарка ─────────────────────────────────
+    if args.send_gift:
+        if not notifier:
+            print(f"{RED}Ошибка: для --send-gift нужен --token и --channel{RESET}")
+            sys.exit(1)
+        gift = StarGift.parse(args.send_gift)
+        if args.buy_url:
+            gift.buy_url = args.buy_url
+        print(f"\n{BOLD}Подарок для отправки:{RESET}")
+        print(f"  Модель:    {gift.model or '—'}")
+        print(f"  Рарность:  {gift.rarity}%" if gift.rarity else "  Рарность:  —")
+        print(f"  Backdrop:  {gift.backdrop or '—'}")
+        print(f"  Цена:      {gift.stars_price} ⭐  ≈  {gift.ton_price} TON"
+              if gift.stars_price else f"  Цена:      {gift.ton_price} TON")
+        print(f"  Xgift:     {gift.xgift}" if gift.xgift else "")
+        print(f"  Продавец:  {gift.seller or '—'}")
+        print(f"  Ссылка:    {gift.buy_url or '—'}")
+        print(f"\n{BOLD}Отправка в {args.channel}...{RESET}")
+        ok = await notifier.send_star_gift(gift)
+        if ok:
+            print(f"{GREEN}✓ Успешно отправлено!{RESET}")
+        sys.exit(0 if ok else 1)
 
     sections = (["usernames", "numbers", "gifts"] if args.type == "all"
                 else [args.type])
