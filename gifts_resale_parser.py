@@ -45,9 +45,14 @@
 
 import argparse
 import asyncio
+import logging
 import os
 import sys
 from typing import List, Optional, Tuple
+
+# Приглушаем служебный лог Telethon (PersistentTimestampOutdatedError и пр.) —
+# это внутренний шум обновлений, на работу парсера не влияет.
+logging.getLogger("telethon").setLevel(logging.CRITICAL)
 
 # Переиспользуем готовые модели из fragment_parser.py
 try:
@@ -192,7 +197,12 @@ def unique_to_stargift(unique, users_by_id: dict) -> StarGift:
 class ResaleMarket:
     def __init__(self, api_id: int, api_hash: str, session: str = "gifts"):
         from telethon import TelegramClient
-        self.client = TelegramClient(session, api_id, api_hash)
+        # receive_updates=False отключает фоновое получение апдейтов
+        # (GetChannelDifference), которое сыпало PersistentTimestampOutdatedError.
+        # Нам нужны только запросы к рынку, апдейты не используются.
+        self.client = TelegramClient(
+            session, api_id, api_hash, receive_updates=False
+        )
 
     async def start(self):
         await self.client.start()
