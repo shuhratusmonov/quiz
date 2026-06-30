@@ -294,9 +294,16 @@ async def main():
     notifier = None
     if args.token and args.channel:
         notifier = TelegramNotifier(token=args.token, channel=args.channel)
+        print(f"{GREEN}📨 Постинг включён → {args.channel}{RESET}")
     elif args.token or args.channel:
-        print(f"{RED}Для постинга нужны и --token, и --channel{RESET}")
+        missing = "--channel" if not args.channel else "--token"
+        print(f"{RED}Для постинга нужны И --token, И --channel "
+              f"(не хватает {missing}){RESET}")
         sys.exit(1)
+    elif not args.list:
+        print(f"{YELLOW}ℹ Постинг ВЫКЛЮЧЕН — только вывод в консоль.{RESET}")
+        print(f"{YELLOW}  Чтобы слать в канал, добавьте: "
+              f"--token ВАШ_ТОКЕН --channel @канал{RESET}")
 
     history = PriceHistory(args.db_path)
 
