@@ -242,7 +242,6 @@ class ResaleMarket:
 # ─── Вывод в консоль ─────────────────────────────────────────────────────────
 
 def print_gift(g: StarGift, idx: int = 0):
-    rarity = f"{g.rarity}%" if g.rarity is not None else "—"
     price = ""
     if g.stars_price is not None:
         price = f"{g.stars_price} ⭐"
@@ -256,7 +255,8 @@ def print_gift(g: StarGift, idx: int = 0):
     if g.avg_stars is not None:
         avg = f"  {CYAN}(ср. {g.avg_stars:.0f} ⭐ по {g.avg_count}){RESET}"
     prefix = f"  {CYAN}{idx:>3}.{RESET} " if idx else "  "
-    print(f"{prefix}{BOLD}{g.model}{RESET}  [{g.backdrop}, ред. {rarity}]")
+    backdrop = f"  [{g.backdrop}]" if g.backdrop else ""
+    print(f"{prefix}{BOLD}{g.model}{RESET}{backdrop}")
     print(f"       💰 {price}{avg}   👤 {g.seller}")
     if g.buy_url:
         print(f"       🔗 {g.buy_url}")

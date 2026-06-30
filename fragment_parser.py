@@ -503,18 +503,6 @@ class TelegramNotifier:
     @staticmethod
     def _format_star_gift(g: "StarGift") -> str:
         """Форматирует StarGift в красивое Telegram-сообщение."""
-        rarity_str = f"{g.rarity}%" if g.rarity is not None else "—"
-        # Значок редкости по проценту
-        if g.rarity is not None:
-            if g.rarity <= 1.0:
-                rarity_icon = "💎"   # легендарный
-            elif g.rarity <= 5.0:
-                rarity_icon = "🔥"   # редкий
-            elif g.rarity <= 15.0:
-                rarity_icon = "⭐"   # необычный
-            else:
-                rarity_icon = "🎯"   # обычный
-
         price_str = ""
         if g.stars_price is not None:
             price_str = f"{g.stars_price} ⭐"
@@ -529,7 +517,6 @@ class TelegramNotifier:
             f"🎁 <b>{g.model}</b>",
             "",
             f"🖼  Model:       <b>{g.model}</b>",
-            f"{rarity_icon}  Рарность:   <b>{rarity_str}</b>",
             f"🎨  Backdrop:    <b>{g.backdrop}</b>",
             f"💰  Цена:        <b>{price_str}</b>",
         ]
