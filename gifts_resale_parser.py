@@ -210,11 +210,24 @@ class ResaleMarket:
     async def stop(self):
         await self.client.disconnect()
 
+    async def _call(self, request):
+        """Выполняет запрос с обработкой FloodWait — Telegram просит подождать
+        при слишком частых обращениях; ждём столько, сколько он указал."""
+        from telethon.errors import FloodWaitError
+        while True:
+            try:
+                return await self.client(request)
+            except FloodWaitError as e:
+                wait = int(getattr(e, "seconds", 5)) + 1
+                print(f"  {YELLOW}⏳ FloodWait: Telegram просит подождать "
+                      f"{wait} сек (слишком частые запросы)...{RESET}")
+                await asyncio.sleep(wait)
+
     async def list_collections(self) -> List[dict]:
         """Возвращает коллекции, доступные на вторичном рынке.
         [{id, title, resale, floor_stars}, ...]"""
         from telethon.tl.functions.payments import GetStarGiftsRequest
-        res = await self.client(GetStarGiftsRequest(hash=0))
+        res = await self._call(GetStarGiftsRequest(hash=0))
         out = []
         for g in getattr(res, "gifts", []):
             resale = getattr(g, "availability_resale", 0) or 0
@@ -233,7 +246,7 @@ class ResaleMarket:
                               sort_by_price: bool = True) -> List[StarGift]:
         """Объявления перепродажи для одной коллекции (по умолчанию — дешёвые первыми)."""
         from telethon.tl.functions.payments import GetResaleStarGiftsRequest
-        res = await self.client(GetResaleStarGiftsRequest(
+        res = await self._call(GetResaleStarGiftsRequest(
             gift_id=gift_id,
             offset="",
             limit=limit,
@@ -253,7 +266,7 @@ class ResaleMarket:
         try:
             from telethon.tl.functions.payments import GetStarsStatusRequest
             from telethon.tl.types import InputPeerSelf
-            status = await self.client(GetStarsStatusRequest(peer=InputPeerSelf()))
+            status = await self._call(GetStarsStatusRequest(peer=InputPeerSelf()))
             bal = getattr(status, "balance", None)
             if bal is None:
                 return None
@@ -282,11 +295,11 @@ class ResaleMarket:
             invoice = InputInvoiceStarGiftResale(
                 slug=slug, to_id=InputPeerSelf(), ton=False
             )
-            form = await self.client(GetPaymentFormRequest(invoice=invoice))
+            form = await self._call(GetPaymentFormRequest(invoice=invoice))
             form_id = getattr(form, "form_id", None)
             if form_id is None:
                 return False, "не получили форму оплаты"
-            await self.client(SendStarsFormRequest(form_id=form_id, invoice=invoice))
+            await self._call(SendStarsFormRequest(form_id=form_id, invoice=invoice))
             return True, "куплено"
         except Exception as exc:
             return False, f"{type(exc).__name__}: {exc}"
@@ -372,7 +385,12 @@ async def scan_once(market, notifier, history, args, target, buy_state) -> Tuple
     total_found = 0
     total_sent = 0
 
-    for c in target:
+    for ci, c in enumerate(target):
+        # Троттлинг: небольшая пауза между коллекциями, чтобы не слать
+        # запросы залпом (снижает риск FloodWait)
+        if ci > 0 and args.req_delay > 0:
+            await asyncio.sleep(args.req_delay)
+
         gifts = await market.resale_listings(c["id"], limit=args.max)
         if not gifts:
             continue
@@ -530,6 +548,9 @@ async def main():
                     help="(устарело) Лимит по звёздам; 0 = выкл")
     ap.add_argument("--interval", type=int, default=_cfg_int(cfg, "interval", 0),
                     help="Повторять каждые N секунд (0 = один раз, напр. 60)")
+    ap.add_argument("--req-delay", type=float,
+                    default=float(cfg.get("req_delay", "0.5") or 0.5),
+                    help="Пауза между запросами коллекций, сек (анти-FloodWait)")
     ap.add_argument("--db-path", default=PriceHistory.DEFAULT_DB,
                     help=f"Файл истории цен (default: {PriceHistory.DEFAULT_DB})")
 
@@ -667,6 +688,12 @@ async def main():
                   f"{RESET}  (Ctrl+C — стоп)")
             print(f"{GREEN}   Фильтр: цена ниже флора минимум на "
                   f"{args.min_discount:.0f}%{RESET}")
+            if args.interval < 60:
+                print(f"{YELLOW}   ⚠ Интервал {args.interval} сек по "
+                      f"{len(target)} коллекциям — это часто. При FloodWait "
+                      f"скрипт сам подождёт, но безопаснее 60–120 сек.{RESET}")
+            print(f"{CYAN}   Анти-FloodWait: пауза {args.req_delay} сек "
+                  f"между коллекциями.{RESET}")
             cycle = 0
             while True:
                 cycle += 1
