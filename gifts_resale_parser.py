@@ -645,6 +645,9 @@ async def main():
     ap.add_argument("--sniper-depth", type=int,
                     default=_cfg_int(cfg, "sniper_depth", 5),
                     help="Сколько топ-лотов смотреть в снайпере (default: 5)")
+    ap.add_argument("--sniper-max-collections", type=int,
+                    default=_cfg_int(cfg, "sniper_max_collections", 5),
+                    help="Сколько коллекций брать при авто-выборе (default: 5)")
     ap.add_argument("--db-path", default=PriceHistory.DEFAULT_DB,
                     help=f"Файл истории цен (default: {PriceHistory.DEFAULT_DB})")
 
@@ -763,21 +766,36 @@ async def main():
             print(f"\nДальше: --collection \"Название\"  или  --all")
             return
 
-        # ── Снайперский режим: фокус на 1-3 коллекциях ──
+        # ── Снайперский режим ──
         if args.sniper:
             wanted = [s.strip().lower() for s in args.sniper_collections.split(",")
                       if s.strip()]
-            if not wanted:
-                print(f"{RED}Для снайпера укажите коллекции: "
-                      f"sniper_collections=Plush Pepe,Heart{RESET}")
-                print("Список доступных — запустите с --list")
-                return
-            targets = [c for c in collections if c["title"].lower() in wanted]
-            if not targets:
-                print(f"{RED}Ни одна из коллекций не найдена в перепродаже: "
-                      f"{args.sniper_collections}{RESET}")
-                print("Проверьте названия через --list")
-                return
+            if wanted:
+                # Ручной список коллекций
+                targets = [c for c in collections if c["title"].lower() in wanted]
+                if not targets:
+                    print(f"{RED}Ни одна из коллекций не найдена в перепродаже: "
+                          f"{args.sniper_collections}{RESET}")
+                    print("Проверьте названия через --list")
+                    return
+            else:
+                # Авто-выбор: самые дешёвые коллекции (флор ≤ макс. цены покупки)
+                cap = args.buy_max_price if args.buy_max_price > 0 else None
+                pool = [c for c in collections if c.get("floor_stars") is not None
+                        and (cap is None or c["floor_stars"] <= cap)]
+                if not pool:
+                    where = f"с флором ≤ {cap} ⭐" if cap else ""
+                    print(f"{RED}Нет коллекций {where} для снайпера.{RESET}")
+                    print("Задайте sniper_collections вручную или поднимите "
+                          "buy_max_price. Список — через --list")
+                    return
+                # сортируем по дешевизне флора, берём верхние N
+                pool.sort(key=lambda c: c["floor_stars"])
+                targets = pool[:args.sniper_max_collections]
+                names = ", ".join(f"{c['title']}({c['floor_stars']}⭐)" for c in targets)
+                print(f"{GREEN}🎯 Авто-выбор {len(targets)} самых дешёвых коллекций"
+                      + (f" с флором ≤ {cap} ⭐" if cap else "") + f":{RESET}")
+                print(f"{GREEN}   {names}{RESET}")
             await sniper_loop(market, notifier, history, args, targets, buy_state)
             return
 
