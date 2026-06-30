@@ -1,12 +1,12 @@
 ' ============================================================
-'  ФОНОВЫЙ ЗАПУСК мониторинга подарков (без окна).
-'  Дважды кликните этот файл — скрипт запустится скрыто и
-'  будет работать, даже если закрыть все окна.
+'  BACKGROUND START - runs the monitor hidden (no window).
+'  Double-click to start. It keeps running after you close
+'  all windows.
 '
-'  ВАЖНО: сначала заполните данные в run_monitor.bat
+'  IMPORTANT: run setup.bat once before using this.
 '
-'  Чтобы ОСТАНОВИТЬ: откройте Диспетчер задач (Ctrl+Shift+Esc),
-'  найдите процесс "python.exe" и завершите его.
+'  To STOP: open Task Manager (Ctrl+Shift+Esc), find
+'  "python.exe" and end the task (or run stop_monitor.bat).
 ' ============================================================
 
 Dim fso, shell, here
@@ -15,10 +15,9 @@ here = fso.GetParentFolderName(WScript.ScriptFullName)
 Set shell = CreateObject("WScript.Shell")
 shell.CurrentDirectory = here
 
-' 0 = скрытое окно, False = не ждать завершения
+' 0 = hidden window, False = do not wait
 shell.Run "run_monitor.bat", 0, False
 
-' Короткое уведомление, что запущено
-MsgBox "Мониторинг подарков запущен в фоне." & vbCrLf & vbCrLf & _
-       "Остановить: Диспетчер задач -> python.exe -> Снять задачу.", _
+MsgBox "Gifts monitor started in background." & vbCrLf & vbCrLf & _
+       "To stop: Task Manager -> python.exe -> End task.", _
        64, "Gifts Monitor"

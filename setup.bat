@@ -1,39 +1,36 @@
 @echo off
-chcp 65001 >nul
 cd /d "%~dp0"
 REM ============================================================
-REM   НАСТРОЙКА мониторинга подарков.
-REM   Запустите ОДИН раз — введите данные, они сохранятся.
-REM   Ничего редактировать вручную не нужно.
+REM   SETUP - run this once to save your settings to config.txt
+REM   Enter ONLY the value, no quotes, no comments.
 REM ============================================================
 
 echo ============================================================
-echo   Настройка мониторинга подарков Telegram
+echo   Telegram Gifts Monitor - Setup
 echo ============================================================
 echo.
-echo Вводите ТОЛЬКО само значение, без кавычек и комментариев.
-echo.
 
-set /p APIID="API ID (число с my.telegram.org): "
-set /p APIHASH="API Hash (строка с my.telegram.org): "
-set /p TOKEN="Токен бота (от @BotFather): "
-set /p CH="Канал (например @abcuzbek): "
-set /p MP="Макс. цена в звёздах (например 500): "
-set /p INT="Интервал в секундах (например 60): "
+set /p APIID="API ID (number from my.telegram.org): "
+set /p APIHASH="API Hash (string from my.telegram.org): "
+set /p TOKEN="Bot token (from @BotFather): "
+set /p CH="Channel (example @abcuzbek): "
+set /p MP="Max price in stars (example 500): "
+set /p INT="Interval in seconds (example 60): "
 
 (
-echo set TG_API_ID=%APIID%
-echo set TG_API_HASH=%APIHASH%
-echo set BOT_TOKEN=%TOKEN%
-echo set CHANNEL=%CH%
-echo set MAX_PRICE=%MP%
-echo set INTERVAL=%INT%
-) > config.bat
+echo api_id=%APIID%
+echo api_hash=%APIHASH%
+echo token=%TOKEN%
+echo channel=%CH%
+echo max_price_stars=%MP%
+echo interval=%INT%
+echo all=1
+) > config.txt
 
 echo.
 echo ============================================================
-echo   Готово! Данные сохранены в config.bat
-echo   Теперь запускайте run_monitor.bat
+echo   Done. Settings saved to config.txt
+echo   Now run: run_monitor.bat
 echo ============================================================
 echo.
 pause

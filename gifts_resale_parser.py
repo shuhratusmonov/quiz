@@ -319,46 +319,98 @@ async def scan_once(market, notifier, history, args, target) -> Tuple[int, int]:
     return total_found, total_sent
 
 
+# ─── Конфиг-файл ─────────────────────────────────────────────────────────────
+
+def load_config(path: str) -> dict:
+    """Читает config.txt в формате KEY=VALUE (по строке).
+    Пустые строки и строки с # игнорируются. Кодировка устойчива к BOM."""
+    cfg = {}
+    if not path or not os.path.exists(path):
+        return cfg
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                cfg[k.strip().lower()] = v.strip()
+    except Exception as exc:
+        print(f"{YELLOW}Не удалось прочитать {path}: {exc}{RESET}")
+    return cfg
+
+
+def _cfg_int(cfg: dict, key: str, default: int) -> int:
+    raw = cfg.get(key, "")
+    try:
+        return int(str(raw).strip())
+    except (ValueError, TypeError):
+        return default
+
+
+def _cfg_bool(cfg: dict, key: str) -> bool:
+    return str(cfg.get(key, "")).strip().lower() in ("1", "true", "yes", "да", "y")
+
+
 # ─── Точка входа ─────────────────────────────────────────────────────────────
 
 async def main():
+    # config.txt используется как источник значений по умолчанию.
+    # Путь можно переопределить через --config.
+    cfg_path = "config.txt"
+    if "--config" in sys.argv:
+        try:
+            cfg_path = sys.argv[sys.argv.index("--config") + 1]
+        except IndexError:
+            pass
+    cfg = load_config(cfg_path)
+
     ap = argparse.ArgumentParser(
         description="Парсер официального вторичного рынка подарков Telegram",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    ap.add_argument("--api-id", type=int, default=os.getenv("TG_API_ID"),
-                    help="Telegram API ID (или env TG_API_ID)")
-    ap.add_argument("--api-hash", default=os.getenv("TG_API_HASH"),
-                    help="Telegram API Hash (или env TG_API_HASH)")
+    ap.add_argument("--config", default="config.txt",
+                    help="Файл настроек KEY=VALUE (default: config.txt)")
+    ap.add_argument("--api-id", default=cfg.get("api_id") or os.getenv("TG_API_ID"),
+                    help="Telegram API ID (config: api_id / env TG_API_ID)")
+    ap.add_argument("--api-hash", default=cfg.get("api_hash") or os.getenv("TG_API_HASH"),
+                    help="Telegram API Hash (config: api_hash / env TG_API_HASH)")
     ap.add_argument("--session", default="gifts", help="Имя файла сессии (default: gifts)")
 
     ap.add_argument("--list", action="store_true",
                     help="Показать все коллекции с перепродажей и выйти")
-    ap.add_argument("--all", action="store_true",
+    ap.add_argument("--all", action="store_true", default=_cfg_bool(cfg, "all"),
                     help="Парсить все коллекции с перепродажей")
-    ap.add_argument("--collection", default="",
+    ap.add_argument("--collection", default=cfg.get("collection", ""),
                     help="Название одной коллекции (напр. 'Plush Pepe')")
-    ap.add_argument("--max", type=int, default=10,
+    ap.add_argument("--max", type=int, default=_cfg_int(cfg, "max", 10),
                     help="Сколько объявлений на коллекцию (default: 10)")
-    ap.add_argument("--max-collections", type=int, default=0,
+    ap.add_argument("--max-collections", type=int,
+                    default=_cfg_int(cfg, "max_collections", 0),
                     help="Ограничить число коллекций при --all (0 = без лимита)")
 
     ap.add_argument("--below-average", action="store_true",
+                    default=_cfg_bool(cfg, "below_average"),
                     help="Слать только объявления дешевле средней цены по истории")
-    ap.add_argument("--max-price-stars", type=int, default=0,
+    ap.add_argument("--max-price-stars", type=int,
+                    default=_cfg_int(cfg, "max_price_stars", 0),
                     help="Слать только дешевле N звёзд (0 = без лимита, напр. 500)")
-    ap.add_argument("--interval", type=int, default=0,
+    ap.add_argument("--interval", type=int, default=_cfg_int(cfg, "interval", 0),
                     help="Повторять каждые N секунд (0 = один раз, напр. 60)")
     ap.add_argument("--db-path", default=PriceHistory.DEFAULT_DB,
                     help=f"Файл истории цен (default: {PriceHistory.DEFAULT_DB})")
 
-    ap.add_argument("--token", default=os.getenv("BOT_TOKEN", ""),
-                    help="Токен бота для постинга в канал (или env BOT_TOKEN)")
-    ap.add_argument("--channel", default="", help="Канал назначения, напр. @abcuzbek")
+    ap.add_argument("--token", default=cfg.get("token") or os.getenv("BOT_TOKEN", ""),
+                    help="Токен бота для постинга (config: token / env BOT_TOKEN)")
+    ap.add_argument("--channel", default=cfg.get("channel", ""),
+                    help="Канал назначения, напр. @abcuzbek")
     ap.add_argument("--delay", type=float, default=0.6, help="Пауза между постами, сек")
 
     args = ap.parse_args()
+
+    if cfg:
+        print(f"{GREEN}⚙ Настройки загружены из {cfg_path}{RESET}")
 
     if not args.api_id or not args.api_hash:
         print(f"{RED}Ошибка: нужны --api-id и --api-hash "
