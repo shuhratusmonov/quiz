@@ -338,6 +338,87 @@ def print_gift(g: StarGift, idx: int = 0):
     print()
 
 
+# ─── Оценка лота (флор/скидка) ───────────────────────────────────────────────
+
+def _evaluate(g: StarGift, priced: list, args) -> Tuple[bool, bool]:
+    """Считает флор и скидку лота. Возвращает (можно_слать, можно_покупать).
+    priced — список лотов этой модели с ценами (для расчёта флора)."""
+    if g.stars_price is None:
+        return False, False
+    others = [x.stars_price for x in priced if x is not g]
+    if not others:
+        return False, False
+    floor = min(others)
+    discount = (floor - g.stars_price) / floor * 100.0
+    g.floor_stars = floor
+    g.discount_pct = discount
+    send_ok = discount >= args.min_discount
+    buy_ok = args.auto_buy and discount >= args.buy_min_discount
+    return send_ok, buy_ok
+
+
+# ─── Снайперский режим ───────────────────────────────────────────────────────
+
+async def sniper_loop(market, notifier, history, args, targets, buy_state):
+    """Частый параллельный опрос 1-3 коллекций. Покупка — РАНЬШЕ отправки."""
+    names = ", ".join(c["title"] for c in targets)
+    print(f"\n{RED}🎯 СНАЙПЕРСКИЙ РЕЖИМ{RESET}")
+    print(f"{GREEN}   Коллекции: {names}{RESET}")
+    print(f"{GREEN}   Опрос каждые {args.sniper_interval} сек, "
+          f"топ-{args.sniper_depth} лотов, параллельно{RESET}")
+    print(f"{GREEN}   Покупка при −{args.buy_min_discount:.0f}% от флора"
+          f"{' (РЕАЛЬНО)' if args.auto_buy and not args._buy_dry else ' (тест)'}"
+          f"{RESET}")
+    if args.sniper_interval < 1:
+        print(f"{YELLOW}   ⚠ Период < 1 сек почти наверняка даст FloodWait. "
+              f"Скрипт переждёт, но реальная частота упадёт.{RESET}")
+    print(f"{CYAN}   (Ctrl+C — стоп){RESET}\n")
+
+    cycle = 0
+    from datetime import datetime
+    while True:
+        cycle += 1
+        # Параллельно опрашиваем все целевые коллекции
+        results = await asyncio.gather(
+            *[market.resale_listings(c["id"], limit=args.sniper_depth)
+              for c in targets],
+            return_exceptions=True,
+        )
+        for c, gifts in zip(targets, results):
+            if isinstance(gifts, Exception) or not gifts:
+                continue
+            priced = [g for g in gifts if g.stars_price is not None]
+            for g in gifts:
+                send_ok, buy_ok = _evaluate(g, priced, args)
+                if not (send_ok or buy_ok):
+                    continue
+                key = g.buy_url or f"{g.model}|{g.stars_price}|{g.seller}"
+                if history.was_sent(key):
+                    continue
+
+                ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                print(f"{BOLD}[{ts}] {g.model} — {g.stars_price} ⭐ "
+                      f"(−{g.discount_pct:.0f}% от флора {g.floor_stars}){RESET}")
+
+                # ПОКУПКА ПЕРВОЙ — ради скорости
+                if buy_ok:
+                    await _try_buy(market, args, buy_state, g)
+                # Потом уведомление в канал
+                if send_ok and notifier:
+                    await notifier.send_star_gift(g)
+                    print(f"       {GREEN}✓ в канал {args.channel}{RESET}")
+
+                history.mark_sent(key)
+
+        # Лёгкий «пульс» раз в ~30 циклов, чтобы видеть, что жив
+        if cycle % 30 == 0:
+            ts = datetime.now().strftime("%H:%M:%S")
+            print(f"{CYAN}· {ts}: проверка #{cycle}, "
+                  f"куплено за сессию {buy_state['bought']}{RESET}")
+
+        await asyncio.sleep(args.sniper_interval)
+
+
 # ─── Автопокупка одного подарка ──────────────────────────────────────────────
 
 async def _try_buy(market, args, buy_state, g: StarGift):
@@ -551,6 +632,19 @@ async def main():
     ap.add_argument("--req-delay", type=float,
                     default=float(cfg.get("req_delay", "0.5") or 0.5),
                     help="Пауза между запросами коллекций, сек (анти-FloodWait)")
+
+    # ── Снайперский режим ──
+    ap.add_argument("--sniper", action="store_true", default=_cfg_bool(cfg, "sniper"),
+                    help="Снайпер: 1-3 коллекции, частый параллельный опрос топ-лотов")
+    ap.add_argument("--sniper-collections",
+                    default=cfg.get("sniper_collections", ""),
+                    help="Коллекции для снайпера через запятую, напр. 'Plush Pepe,Heart'")
+    ap.add_argument("--sniper-interval", type=float,
+                    default=float(cfg.get("sniper_interval", "2") or 2),
+                    help="Период опроса в снайпере, сек (default: 2)")
+    ap.add_argument("--sniper-depth", type=int,
+                    default=_cfg_int(cfg, "sniper_depth", 5),
+                    help="Сколько топ-лотов смотреть в снайпере (default: 5)")
     ap.add_argument("--db-path", default=PriceHistory.DEFAULT_DB,
                     help=f"Файл истории цен (default: {PriceHistory.DEFAULT_DB})")
 
@@ -663,6 +757,24 @@ async def main():
                 print(f"  • {BOLD}{c['title']}{RESET}  "
                       f"(в продаже: {c['resale']}, от {floor})")
             print(f"\nДальше: --collection \"Название\"  или  --all")
+            return
+
+        # ── Снайперский режим: фокус на 1-3 коллекциях ──
+        if args.sniper:
+            wanted = [s.strip().lower() for s in args.sniper_collections.split(",")
+                      if s.strip()]
+            if not wanted:
+                print(f"{RED}Для снайпера укажите коллекции: "
+                      f"sniper_collections=Plush Pepe,Heart{RESET}")
+                print("Список доступных — запустите с --list")
+                return
+            targets = [c for c in collections if c["title"].lower() in wanted]
+            if not targets:
+                print(f"{RED}Ни одна из коллекций не найдена в перепродаже: "
+                      f"{args.sniper_collections}{RESET}")
+                print("Проверьте названия через --list")
+                return
+            await sniper_loop(market, notifier, history, args, targets, buy_state)
             return
 
         # Выбор коллекций для парсинга (один раз — список коллекций стабилен)

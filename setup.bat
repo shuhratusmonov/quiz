@@ -32,6 +32,18 @@ if "%AUTOBUY%"=="1" (
     set /p BUYMAX="Max price per gift in stars (0=no limit): "
 )
 
+echo.
+echo --- SNIPER MODE (optional) ---
+echo Focus on 1-3 collections, poll fast. Blank = off.
+set SNIPER=0
+set SNIPERCOLL=
+set SNIPERINT=2
+if "%AUTOBUY%"=="1" (
+    set /p SNIPERCOLL="Sniper collections (comma, blank=off): "
+    if not "%SNIPERCOLL%"=="" set SNIPER=1
+    if not "%SNIPERCOLL%"=="" set /p SNIPERINT="Sniper poll interval in seconds (e.g. 2): "
+)
+
 (
 echo api_id=%APIID%
 echo api_hash=%APIHASH%
@@ -45,6 +57,9 @@ echo buy_real=%BUYREAL%
 echo buy_budget=%BUYBUDGET%
 echo buy_max_price=%BUYMAX%
 echo buy_min_discount=%BUYDISC%
+echo sniper=%SNIPER%
+echo sniper_collections=%SNIPERCOLL%
+echo sniper_interval=%SNIPERINT%
 ) > config.txt
 
 echo.
