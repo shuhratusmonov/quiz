@@ -105,6 +105,23 @@ def _attr(attributes, type_suffix: str):
     return None
 
 
+def _rarity_percent(attr) -> Optional[float]:
+    """Извлекает редкость в процентах из атрибута.
+    Поле rarity может быть числом (промилле) или объектом
+    StarGiftAttributeRarity с полем .permille. 30‰ → 3.0%."""
+    if attr is None:
+        return None
+    r = getattr(attr, "rarity", None)
+    if r is None:
+        return None
+    # Объект StarGiftAttributeRarity → берём .permille
+    permille = getattr(r, "permille", r)
+    try:
+        return round(float(permille) / 10.0, 1)
+    except (TypeError, ValueError):
+        return None
+
+
 def _seller_name(unique, users_by_id: dict) -> str:
     """Определяет продавца: @username, имя или адрес."""
     owner_name = getattr(unique, "owner_name", None)
@@ -142,11 +159,10 @@ def unique_to_stargift(unique, users_by_id: dict) -> StarGift:
     backdrop_name = getattr(backdrop_a, "name", "") if backdrop_a else ""
 
     # rarity в API хранится в промилле (‰): 30 → 3.0%
-    rarity = None
-    if model_a is not None:
-        r = getattr(model_a, "rarity", None)
-        if r is not None:
-            rarity = round(r / 10.0, 1)
+    # Берём редкость модели, а если её нет — backdrop'а
+    rarity = _rarity_percent(model_a)
+    if rarity is None:
+        rarity = _rarity_percent(backdrop_a)
 
     title = getattr(unique, "title", "") or model_name
     num = getattr(unique, "num", None)
