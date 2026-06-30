@@ -17,6 +17,19 @@ set /p CH="Channel (example @abcuzbek): "
 set /p DISC="Min discount below floor in %% (example 20): "
 set /p INT="Interval in seconds (example 60): "
 
+echo.
+echo --- AUTO-BUY (spends real Stars!) ---
+echo Leave 0 to disable buying. Read warnings before enabling.
+set /p AUTOBUY="Enable auto-buy? (1=yes, 0=no): "
+set BUYREAL=0
+set BUYBUDGET=0
+set BUYMAX=0
+if "%AUTOBUY%"=="1" (
+    set /p BUYREAL="Real purchases? (1=real spends money, 0=test only): "
+    set /p BUYBUDGET="Budget per run in stars (e.g. 2000; required for real): "
+    set /p BUYMAX="Max price per gift in stars (0=no limit): "
+)
+
 (
 echo api_id=%APIID%
 echo api_hash=%APIHASH%
@@ -25,6 +38,10 @@ echo channel=%CH%
 echo min_discount=%DISC%
 echo interval=%INT%
 echo all=1
+echo auto_buy=%AUTOBUY%
+echo buy_real=%BUYREAL%
+echo buy_budget=%BUYBUDGET%
+echo buy_max_price=%BUYMAX%
 ) > config.txt
 
 echo.

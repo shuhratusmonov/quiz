@@ -248,6 +248,55 @@ class ResaleMarket:
                 print(f"  {YELLOW}Пропуск объявления: {exc}{RESET}")
         return gifts
 
+    async def get_balance(self) -> Optional[int]:
+        """Возвращает баланс Stars аккаунта (или None при ошибке)."""
+        try:
+            from telethon.tl.functions.payments import GetStarsStatusRequest
+            from telethon.tl.types import InputPeerSelf
+            status = await self.client(GetStarsStatusRequest(peer=InputPeerSelf()))
+            bal = getattr(status, "balance", None)
+            if bal is None:
+                return None
+            amount = getattr(bal, "amount", 0) or 0
+            nanos = getattr(bal, "nanos", 0) or 0
+            return int(amount + nanos / 1e9)
+        except Exception as exc:
+            print(f"  {YELLOW}Не удалось узнать баланс: {exc}{RESET}")
+            return None
+
+    async def buy_resale(self, slug: str, dry_run: bool = True) -> Tuple[bool, str]:
+        """Покупает resale-подарок по slug на свой аккаунт (оплата Stars).
+        dry_run=True — ничего не покупает, только имитирует.
+        Возвращает (успех, сообщение)."""
+        if not slug:
+            return False, "нет slug подарка"
+        if dry_run:
+            return True, "ТЕСТ (dry-run): покупка НЕ выполнена"
+        try:
+            from telethon.tl.functions.payments import (
+                GetPaymentFormRequest, SendStarsFormRequest,
+            )
+            from telethon.tl.types import (
+                InputInvoiceStarGiftResale, InputPeerSelf,
+            )
+            invoice = InputInvoiceStarGiftResale(
+                slug=slug, to_id=InputPeerSelf(), ton=False
+            )
+            form = await self.client(GetPaymentFormRequest(invoice=invoice))
+            form_id = getattr(form, "form_id", None)
+            if form_id is None:
+                return False, "не получили форму оплаты"
+            await self.client(SendStarsFormRequest(form_id=form_id, invoice=invoice))
+            return True, "куплено"
+        except Exception as exc:
+            return False, f"{type(exc).__name__}: {exc}"
+
+
+def _slug_from(gift: StarGift) -> str:
+    """Достаёт slug из buy_url (https://t.me/nft/SLUG)."""
+    url = gift.buy_url or ""
+    return url.rstrip("/").split("/")[-1] if "/nft/" in url else ""
+
 
 # ─── Вывод в консоль ─────────────────────────────────────────────────────────
 
@@ -276,9 +325,45 @@ def print_gift(g: StarGift, idx: int = 0):
     print()
 
 
+# ─── Автопокупка одного подарка ──────────────────────────────────────────────
+
+async def _try_buy(market, args, buy_state, g: StarGift):
+    """Пытается купить подарок g с учётом всех предохранителей."""
+    price = g.stars_price or 0
+    slug = _slug_from(g)
+    dry = args._buy_dry
+
+    # Предохранитель 1: цена за подарок
+    if args.buy_max_price > 0 and price > args.buy_max_price:
+        print(f"       {YELLOW}⊘ покупка пропущена: {price} ⭐ дороже лимита "
+              f"{args.buy_max_price} ⭐{RESET}")
+        return
+
+    # Предохранитель 2: бюджет на запуск (только для реальной покупки)
+    if not dry:
+        remaining = args.buy_budget - buy_state["spent"]
+        if price > remaining:
+            print(f"       {YELLOW}⊘ покупка пропущена: бюджет почти исчерпан "
+                  f"(осталось {remaining} ⭐, нужно {price} ⭐){RESET}")
+            return
+
+    ok, msg = await market.buy_resale(slug, dry_run=dry)
+    if ok:
+        if not dry:
+            buy_state["spent"] += price
+            buy_state["bought"] += 1
+            print(f"       {GREEN}🛒 КУПЛЕНО за {price} ⭐  "
+                  f"(потрачено {buy_state['spent']}/{args.buy_budget} ⭐){RESET}\n")
+        else:
+            buy_state["bought"] += 1
+            print(f"       {CYAN}🛒 {msg} (купил бы за {price} ⭐){RESET}\n")
+    else:
+        print(f"       {RED}✗ покупка не удалась: {msg}{RESET}\n")
+
+
 # ─── Одна проверка рынка ─────────────────────────────────────────────────────
 
-async def scan_once(market, notifier, history, args, target) -> Tuple[int, int]:
+async def scan_once(market, notifier, history, args, target, buy_state) -> Tuple[int, int]:
     """Один проход по коллекциям. Возвращает (найдено, отправлено)."""
     total_found = 0
     total_sent = 0
@@ -320,9 +405,10 @@ async def scan_once(market, notifier, history, args, target) -> Tuple[int, int]:
                 if (g.avg_stars is None or g.stars_price >= g.avg_stars):
                     continue
 
-            # Антиповтор: если уже отправляли это объявление — пропускаем
+            # Антиповтор: если уже обрабатывали это объявление — пропускаем
+            # (учитывает и отправку, и покупку)
             gift_key = g.buy_url or f"{g.model}|{g.stars_price}|{g.seller}"
-            if notifier and history.was_sent(gift_key):
+            if (notifier or args.auto_buy) and history.was_sent(gift_key):
                 continue
 
             if not printed_header:
@@ -337,10 +423,20 @@ async def scan_once(market, notifier, history, args, target) -> Tuple[int, int]:
                 if ok:
                     total_sent += 1
                     history.mark_sent(gift_key)
-                    print(f"       {GREEN}✓ отправлено в {args.channel}{RESET}\n")
+                    print(f"       {GREEN}✓ отправлено в {args.channel}{RESET}")
                 await asyncio.sleep(args.delay)
 
+            # ── Автопокупка ──
+            if args.auto_buy:
+                await _try_buy(market, args, buy_state, g)
+                history.mark_sent(gift_key)  # не обрабатывать повторно
+
     suffix = f", отправлено {total_sent}" if notifier else ""
+    if args.auto_buy:
+        word = "куплено" if not args._buy_dry else "купил бы"
+        suffix += f", {word} {buy_state['bought']}"
+        if not args._buy_dry:
+            suffix += f" (потрачено {buy_state['spent']} ⭐)"
     if total_found == 0:
         print(f"  {YELLOW}Новых подходящих объявлений нет.{RESET}")
     else:
@@ -439,6 +535,17 @@ async def main():
                     help="Канал назначения, напр. @abcuzbek")
     ap.add_argument("--delay", type=float, default=0.6, help="Пауза между постами, сек")
 
+    # ── Автопокупка (тратит реальные Stars!) ──
+    ap.add_argument("--auto-buy", action="store_true", default=_cfg_bool(cfg, "auto_buy"),
+                    help="Покупать подарки, прошедшие фильтр (по умолчанию ВЫКЛ)")
+    ap.add_argument("--buy-real", action="store_true", default=_cfg_bool(cfg, "buy_real"),
+                    help="РЕАЛЬНАЯ покупка (иначе тестовый dry-run)")
+    ap.add_argument("--buy-budget", type=int, default=_cfg_int(cfg, "buy_budget", 0),
+                    help="Лимит трат Stars за запуск (0 = реальная покупка запрещена)")
+    ap.add_argument("--buy-max-price", type=int,
+                    default=_cfg_int(cfg, "buy_max_price", 0),
+                    help="Не покупать дороже N звёзд за подарок (0 = без лимита)")
+
     args = ap.parse_args()
 
     if cfg:
@@ -476,11 +583,35 @@ async def main():
         print(f"{YELLOW}  Чтобы слать в канал, добавьте: "
               f"--token ВАШ_ТОКЕН --channel @канал{RESET}")
 
+    # ── Настройка автопокупки с предохранителями ──
+    buy_state = {"spent": 0, "bought": 0}
+    if args.auto_buy:
+        # Реальная покупка возможна только при заданном бюджете > 0
+        if args.buy_real and args.buy_budget > 0:
+            print(f"{RED}🛒 АВТОПОКУПКА ВКЛЮЧЕНА (РЕАЛЬНЫЕ ТРАТЫ){RESET}")
+            print(f"{RED}   Бюджет на запуск: {args.buy_budget} ⭐"
+                  + (f", не дороже {args.buy_max_price} ⭐/шт" if args.buy_max_price else "")
+                  + f"{RESET}")
+            args._buy_dry = False
+        else:
+            reason = "не задан buy_budget>0" if args.buy_real else "режим теста"
+            print(f"{YELLOW}🛒 Автопокупка в ТЕСТОВОМ режиме (dry-run): {reason}.{RESET}")
+            print(f"{YELLOW}   Реальные траты НЕ выполняются. Для реальной покупки "
+                  f"задайте buy_real=1 и buy_budget>0 в config.txt.{RESET}")
+            args._buy_dry = True
+    else:
+        args._buy_dry = True
+
     history = PriceHistory(args.db_path)
 
     market = ResaleMarket(int(args.api_id), args.api_hash, session=args.session)
     print(f"{BOLD}Подключение к Telegram...{RESET}")
     await market.start()
+
+    if args.auto_buy and not args._buy_dry:
+        bal = await market.get_balance()
+        if bal is not None:
+            print(f"{BOLD}💰 Баланс: {bal} ⭐{RESET}")
 
     try:
         collections = await market.list_collections()
@@ -526,14 +657,14 @@ async def main():
                 cycle += 1
                 ts = datetime.now().strftime("%H:%M:%S")
                 print(f"\n{BOLD}═══ Проверка #{cycle} в {ts} ═══{RESET}")
-                await scan_once(market, notifier, history, args, target)
+                await scan_once(market, notifier, history, args, target, buy_state)
                 nxt = datetime.now().timestamp() + args.interval
                 nxt_str = datetime.fromtimestamp(nxt).strftime("%H:%M:%S")
                 print(f"{CYAN}⏳ Следующая проверка через {args.interval} сек "
                       f"(в {nxt_str})...{RESET}")
                 await asyncio.sleep(args.interval)
         else:
-            await scan_once(market, notifier, history, args, target)
+            await scan_once(market, notifier, history, args, target, buy_state)
             print(f"\n{YELLOW}ℹ Это была разовая проверка (interval=0).{RESET}")
             print(f"{YELLOW}  Чтобы проверять автоматически, задайте интервал: "
                   f"перезапустите setup.bat и введите, например, 60.{RESET}")
