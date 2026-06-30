@@ -505,6 +505,7 @@ async def main():
             return
 
         # Однократный запуск или цикл по интервалу
+        from datetime import datetime
         if args.interval > 0:
             print(f"{GREEN}🔁 Режим мониторинга: каждые {args.interval} сек."
                   f"{RESET}  (Ctrl+C — стоп)")
@@ -513,13 +514,19 @@ async def main():
             cycle = 0
             while True:
                 cycle += 1
-                from datetime import datetime
                 ts = datetime.now().strftime("%H:%M:%S")
                 print(f"\n{BOLD}═══ Проверка #{cycle} в {ts} ═══{RESET}")
                 await scan_once(market, notifier, history, args, target)
+                nxt = datetime.now().timestamp() + args.interval
+                nxt_str = datetime.fromtimestamp(nxt).strftime("%H:%M:%S")
+                print(f"{CYAN}⏳ Следующая проверка через {args.interval} сек "
+                      f"(в {nxt_str})...{RESET}")
                 await asyncio.sleep(args.interval)
         else:
             await scan_once(market, notifier, history, args, target)
+            print(f"\n{YELLOW}ℹ Это была разовая проверка (interval=0).{RESET}")
+            print(f"{YELLOW}  Чтобы проверять автоматически, задайте интервал: "
+                  f"перезапустите setup.bat и введите, например, 60.{RESET}")
 
     except KeyboardInterrupt:
         print(f"\n{YELLOW}Остановлено пользователем.{RESET}")
