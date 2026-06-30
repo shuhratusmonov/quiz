@@ -47,7 +47,7 @@ import argparse
 import asyncio
 import os
 import sys
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 # Переиспользуем готовые модели из fragment_parser.py
 try:
@@ -263,6 +263,62 @@ def print_gift(g: StarGift, idx: int = 0):
     print()
 
 
+# ─── Одна проверка рынка ─────────────────────────────────────────────────────
+
+async def scan_once(market, notifier, history, args, target) -> Tuple[int, int]:
+    """Один проход по коллекциям. Возвращает (найдено, отправлено)."""
+    total_found = 0
+    total_sent = 0
+
+    for c in target:
+        gifts = await market.resale_listings(c["id"], limit=args.max)
+        if not gifts:
+            continue
+
+        printed_header = False
+        for i, g in enumerate(gifts, 1):
+            history.enrich(g, n=10)     # средняя ДО записи текущей
+            history.record(g)           # сохраняем в историю цен
+
+            # Фильтр по максимальной цене в звёздах
+            if args.max_price_stars > 0:
+                if g.stars_price is None or g.stars_price >= args.max_price_stars:
+                    continue
+
+            # Фильтр "ниже средней"
+            if args.below_average:
+                if (g.avg_stars is None or g.stars_price is None
+                        or g.stars_price >= g.avg_stars):
+                    continue
+
+            # Антиповтор: если уже отправляли это объявление — пропускаем
+            gift_key = g.buy_url or f"{g.model}|{g.stars_price}|{g.seller}"
+            if notifier and history.was_sent(gift_key):
+                continue
+
+            if not printed_header:
+                print(f"\n{BOLD}── {c['title']} ──{RESET}")
+                printed_header = True
+
+            print_gift(g, i)
+            total_found += 1
+
+            if notifier:
+                ok = await notifier.send_star_gift(g)
+                if ok:
+                    total_sent += 1
+                    history.mark_sent(gift_key)
+                    print(f"       {GREEN}✓ отправлено в {args.channel}{RESET}\n")
+                await asyncio.sleep(args.delay)
+
+    suffix = f", отправлено {total_sent}" if notifier else ""
+    if total_found == 0:
+        print(f"  {YELLOW}Новых подходящих объявлений нет.{RESET}")
+    else:
+        print(f"\n{BOLD}Итого: найдено {total_found}{suffix}{RESET}")
+    return total_found, total_sent
+
+
 # ─── Точка входа ─────────────────────────────────────────────────────────────
 
 async def main():
@@ -290,6 +346,10 @@ async def main():
 
     ap.add_argument("--below-average", action="store_true",
                     help="Слать только объявления дешевле средней цены по истории")
+    ap.add_argument("--max-price-stars", type=int, default=0,
+                    help="Слать только дешевле N звёзд (0 = без лимита, напр. 500)")
+    ap.add_argument("--interval", type=int, default=0,
+                    help="Повторять каждые N секунд (0 = один раз, напр. 60)")
     ap.add_argument("--db-path", default=PriceHistory.DEFAULT_DB,
                     help=f"Файл истории цен (default: {PriceHistory.DEFAULT_DB})")
 
@@ -343,7 +403,7 @@ async def main():
             print(f"\nДальше: --collection \"Название\"  или  --all")
             return
 
-        # Выбор коллекций для парсинга
+        # Выбор коллекций для парсинга (один раз — список коллекций стабилен)
         if args.collection:
             target = [c for c in collections
                       if c["title"].lower() == args.collection.lower()]
@@ -359,42 +419,25 @@ async def main():
             print(f"{RED}Укажите --all, --collection НАЗВАНИЕ или --list{RESET}")
             return
 
-        total_found = 0
-        total_sent = 0
+        # Однократный запуск или цикл по интервалу
+        if args.interval > 0:
+            print(f"{GREEN}🔁 Режим мониторинга: каждые {args.interval} сек."
+                  f"{RESET}  (Ctrl+C — стоп)")
+            if args.max_price_stars > 0:
+                print(f"{GREEN}   Фильтр: дешевле {args.max_price_stars} ⭐{RESET}")
+            cycle = 0
+            while True:
+                cycle += 1
+                from datetime import datetime
+                ts = datetime.now().strftime("%H:%M:%S")
+                print(f"\n{BOLD}═══ Проверка #{cycle} в {ts} ═══{RESET}")
+                await scan_once(market, notifier, history, args, target)
+                await asyncio.sleep(args.interval)
+        else:
+            await scan_once(market, notifier, history, args, target)
 
-        for c in target:
-            print(f"\n{BOLD}{'─'*56}{RESET}")
-            print(f"{BOLD}  {c['title']}{RESET}  (в продаже: {c['resale']})")
-            print(f"{BOLD}{'─'*56}{RESET}")
-
-            gifts = await market.resale_listings(c["id"], limit=args.max)
-            if not gifts:
-                print("  Нет объявлений.")
-                continue
-
-            for i, g in enumerate(gifts, 1):
-                history.enrich(g, n=10)     # средняя ДО записи текущей
-                history.record(g)           # сохраняем в историю
-
-                # Фильтр "ниже средней"
-                if args.below_average:
-                    if (g.avg_stars is None or g.stars_price is None
-                            or g.stars_price >= g.avg_stars):
-                        continue
-
-                print_gift(g, i)
-                total_found += 1
-
-                if notifier:
-                    ok = await notifier.send_star_gift(g)
-                    if ok:
-                        total_sent += 1
-                        print(f"       {GREEN}✓ отправлено в {args.channel}{RESET}\n")
-                    await asyncio.sleep(args.delay)
-
-        print(f"\n{BOLD}Итого: найдено {total_found}"
-              + (f", отправлено {total_sent}" if notifier else "") + f"{RESET}")
-
+    except KeyboardInterrupt:
+        print(f"\n{YELLOW}Остановлено пользователем.{RESET}")
     except Exception as exc:
         print(f"\n{RED}Ошибка: {exc}{RESET}")
         import traceback

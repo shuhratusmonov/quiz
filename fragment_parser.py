@@ -151,6 +151,13 @@ class PriceHistory:
                 )
             """)
             c.execute("CREATE INDEX IF NOT EXISTS idx_model ON gift_prices(model)")
+            # Учёт уже отправленных в канал объявлений (антиповтор)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS sent_gifts (
+                    gift_key  TEXT PRIMARY KEY,
+                    sent_at   TEXT DEFAULT (datetime('now','localtime'))
+                )
+            """)
             c.commit()
 
     def record(self, gift: "StarGift"):
@@ -194,6 +201,26 @@ class PriceHistory:
         gift.avg_stars = avg
         gift.avg_count = count
         return gift
+
+    def was_sent(self, gift_key: str) -> bool:
+        """Проверяет, отправлялось ли уже это объявление в канал."""
+        if not gift_key:
+            return False
+        with sqlite3.connect(self.db_path) as c:
+            row = c.execute(
+                "SELECT 1 FROM sent_gifts WHERE gift_key = ?", (gift_key,)
+            ).fetchone()
+        return row is not None
+
+    def mark_sent(self, gift_key: str):
+        """Помечает объявление как отправленное."""
+        if not gift_key:
+            return
+        with sqlite3.connect(self.db_path) as c:
+            c.execute(
+                "INSERT OR IGNORE INTO sent_gifts (gift_key) VALUES (?)", (gift_key,)
+            )
+            c.commit()
 
     def total(self, model: str) -> int:
         """Общее кол-во записей для модели."""
