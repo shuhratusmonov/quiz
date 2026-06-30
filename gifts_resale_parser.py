@@ -333,6 +333,10 @@ async def _try_buy(market, args, buy_state, g: StarGift):
     slug = _slug_from(g)
     dry = args._buy_dry
 
+    # Предохранитель 0: скидка для ПОКУПКИ может быть строже, чем для отправки
+    if g.discount_pct is None or g.discount_pct < args.buy_min_discount:
+        return  # не дотягивает до порога покупки — молча пропускаем
+
     # Предохранитель 1: цена за подарок
     if args.buy_max_price > 0 and price > args.buy_max_price:
         print(f"       {YELLOW}⊘ покупка пропущена: {price} ⭐ дороже лимита "
@@ -545,6 +549,9 @@ async def main():
     ap.add_argument("--buy-max-price", type=int,
                     default=_cfg_int(cfg, "buy_max_price", 0),
                     help="Не покупать дороже N звёзд за подарок (0 = без лимита)")
+    ap.add_argument("--buy-min-discount", type=float,
+                    default=float(_cfg_int(cfg, "buy_min_discount", 30)),
+                    help="Покупать только если цена ниже флора на N%% (default: 30)")
 
     args = ap.parse_args()
 
@@ -589,15 +596,18 @@ async def main():
         # Реальная покупка возможна только при заданном бюджете > 0
         if args.buy_real and args.buy_budget > 0:
             print(f"{RED}🛒 АВТОПОКУПКА ВКЛЮЧЕНА (РЕАЛЬНЫЕ ТРАТЫ){RESET}")
-            print(f"{RED}   Бюджет на запуск: {args.buy_budget} ⭐"
+            print(f"{RED}   Условие: ниже флора на {args.buy_min_discount:.0f}%+, "
+                  f"бюджет {args.buy_budget} ⭐"
                   + (f", не дороже {args.buy_max_price} ⭐/шт" if args.buy_max_price else "")
                   + f"{RESET}")
             args._buy_dry = False
         else:
             reason = "не задан buy_budget>0" if args.buy_real else "режим теста"
             print(f"{YELLOW}🛒 Автопокупка в ТЕСТОВОМ режиме (dry-run): {reason}.{RESET}")
-            print(f"{YELLOW}   Реальные траты НЕ выполняются. Для реальной покупки "
-                  f"задайте buy_real=1 и buy_budget>0 в config.txt.{RESET}")
+            print(f"{YELLOW}   Условие покупки: ниже флора на "
+                  f"{args.buy_min_discount:.0f}%+. Реальные траты НЕ выполняются.{RESET}")
+            print(f"{YELLOW}   Для реальной покупки: buy_real=1 и buy_budget>0 "
+                  f"в config.txt.{RESET}")
             args._buy_dry = True
     else:
         args._buy_dry = True

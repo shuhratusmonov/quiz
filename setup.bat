@@ -24,7 +24,9 @@ set /p AUTOBUY="Enable auto-buy? (1=yes, 0=no): "
 set BUYREAL=0
 set BUYBUDGET=0
 set BUYMAX=0
+set BUYDISC=30
 if "%AUTOBUY%"=="1" (
+    set /p BUYDISC="Buy only if below floor by %% (example 30): "
     set /p BUYREAL="Real purchases? (1=real spends money, 0=test only): "
     set /p BUYBUDGET="Budget per run in stars (e.g. 2000; required for real): "
     set /p BUYMAX="Max price per gift in stars (0=no limit): "
@@ -42,6 +44,7 @@ echo auto_buy=%AUTOBUY%
 echo buy_real=%BUYREAL%
 echo buy_budget=%BUYBUDGET%
 echo buy_max_price=%BUYMAX%
+echo buy_min_discount=%BUYDISC%
 ) > config.txt
 
 echo.
