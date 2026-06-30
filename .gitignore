@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 *.pyo
 .env
+
+# История цен (генерируется при запуске)
+*.db
+gift_prices.db
