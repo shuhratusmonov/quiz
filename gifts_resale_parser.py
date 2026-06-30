@@ -365,6 +365,17 @@ async def main():
               f"(получить на https://my.telegram.org){RESET}")
         sys.exit(1)
 
+    # Проверка, что api-id — число (частая ошибка: незаполненный .bat)
+    try:
+        args.api_id = int(args.api_id)
+    except (ValueError, TypeError):
+        print(f"{RED}Ошибка: api-id должен быть числом, а получено: "
+              f"'{args.api_id}'.{RESET}")
+        print(f"{YELLOW}Похоже, вы не вписали реальные значения. "
+              f"Откройте run_monitor.bat и замените ВАШ_API_ID / ВАШ_API_HASH "
+              f"на настоящие ключи с my.telegram.org.{RESET}")
+        sys.exit(1)
+
     _require_telethon()
 
     notifier = None
