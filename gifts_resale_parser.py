@@ -537,6 +537,9 @@ async def main():
                     help="Токен бота для постинга (config: token / env BOT_TOKEN)")
     ap.add_argument("--channel", default=cfg.get("channel", ""),
                     help="Канал назначения, напр. @abcuzbek")
+    ap.add_argument("--no-post", action="store_true",
+                    default=(_cfg_int(cfg, "post", 1) == 0),
+                    help="Не отправлять в канал (config: post=0)")
     ap.add_argument("--delay", type=float, default=0.6, help="Пауза между постами, сек")
 
     # ── Автопокупка (тратит реальные Stars!) ──
@@ -577,7 +580,9 @@ async def main():
     _require_telethon()
 
     notifier = None
-    if args.token and args.channel:
+    if args.no_post:
+        print(f"{YELLOW}🚫 Отправка в канал ОТКЛЮЧЕНА (только покупка/консоль).{RESET}")
+    elif args.token and args.channel:
         notifier = TelegramNotifier(token=args.token, channel=args.channel)
         print(f"{GREEN}📨 Постинг включён → {args.channel}{RESET}")
     elif args.token or args.channel:
