@@ -258,6 +258,9 @@ def print_gift(g: StarGift, idx: int = 0):
     backdrop = f"  [{g.backdrop}]" if g.backdrop else ""
     print(f"{prefix}{BOLD}{g.model}{RESET}{backdrop}")
     print(f"       💰 {price}{avg}   👤 {g.seller}")
+    if g.floor_stars is not None and g.discount_pct is not None:
+        print(f"       🏷 Флор {g.floor_stars} ⭐  "
+              f"{GREEN}🔥 −{g.discount_pct:.0f}% от флора{RESET}")
     if g.buy_url:
         print(f"       🔗 {g.buy_url}")
     print()
@@ -275,20 +278,36 @@ async def scan_once(market, notifier, history, args, target) -> Tuple[int, int]:
         if not gifts:
             continue
 
+        # Все текущие цены этой модели на рынке — для расчёта флора
+        priced = [g for g in gifts if g.stars_price is not None]
+
         printed_header = False
         for i, g in enumerate(gifts, 1):
             history.enrich(g, n=10)     # средняя ДО записи текущей
             history.record(g)           # сохраняем в историю цен
 
-            # Фильтр по максимальной цене в звёздах
-            if args.max_price_stars > 0:
-                if g.stars_price is None or g.stars_price >= args.max_price_stars:
-                    continue
+            if g.stars_price is None:
+                continue
 
-            # Фильтр "ниже средней"
+            # Флор = самый дешёвый ДРУГОЙ подарок этой модели на рынке
+            others = [x.stars_price for x in priced if x is not g]
+            if not others:
+                continue  # один лот — не с чем сравнивать
+            floor = min(others)
+
+            # Насколько этот лот дешевле флора (в %)
+            discount = (floor - g.stars_price) / floor * 100.0
+
+            # Отправляем только если цена ниже флора минимум на N%
+            if discount < args.min_discount:
+                continue
+
+            g.floor_stars = floor
+            g.discount_pct = discount
+
+            # Доп. фильтр "ниже средней" (если включён)
             if args.below_average:
-                if (g.avg_stars is None or g.stars_price is None
-                        or g.stars_price >= g.avg_stars):
+                if (g.avg_stars is None or g.stars_price >= g.avg_stars):
                     continue
 
             # Антиповтор: если уже отправляли это объявление — пропускаем
@@ -393,9 +412,12 @@ async def main():
     ap.add_argument("--below-average", action="store_true",
                     default=_cfg_bool(cfg, "below_average"),
                     help="Слать только объявления дешевле средней цены по истории")
+    ap.add_argument("--min-discount", type=float,
+                    default=float(_cfg_int(cfg, "min_discount", 20)),
+                    help="Слать только если цена ниже флора на N%% (default: 20)")
     ap.add_argument("--max-price-stars", type=int,
                     default=_cfg_int(cfg, "max_price_stars", 0),
-                    help="Слать только дешевле N звёзд (0 = без лимита, напр. 500)")
+                    help="(устарело) Лимит по звёздам; 0 = выкл")
     ap.add_argument("--interval", type=int, default=_cfg_int(cfg, "interval", 0),
                     help="Повторять каждые N секунд (0 = один раз, напр. 60)")
     ap.add_argument("--db-path", default=PriceHistory.DEFAULT_DB,
@@ -486,8 +508,8 @@ async def main():
         if args.interval > 0:
             print(f"{GREEN}🔁 Режим мониторинга: каждые {args.interval} сек."
                   f"{RESET}  (Ctrl+C — стоп)")
-            if args.max_price_stars > 0:
-                print(f"{GREEN}   Фильтр: дешевле {args.max_price_stars} ⭐{RESET}")
+            print(f"{GREEN}   Фильтр: цена ниже флора минимум на "
+                  f"{args.min_discount:.0f}%{RESET}")
             cycle = 0
             while True:
                 cycle += 1

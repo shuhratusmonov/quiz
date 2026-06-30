@@ -14,7 +14,7 @@ set /p APIID="API ID (number from my.telegram.org): "
 set /p APIHASH="API Hash (string from my.telegram.org): "
 set /p TOKEN="Bot token (from @BotFather): "
 set /p CH="Channel (example @abcuzbek): "
-set /p MP="Max price in stars (example 500): "
+set /p DISC="Min discount below floor in %% (example 20): "
 set /p INT="Interval in seconds (example 60): "
 
 (
@@ -22,7 +22,7 @@ echo api_id=%APIID%
 echo api_hash=%APIHASH%
 echo token=%TOKEN%
 echo channel=%CH%
-echo max_price_stars=%MP%
+echo min_discount=%DISC%
 echo interval=%INT%
 echo all=1
 ) > config.txt

@@ -79,6 +79,8 @@ class StarGift:
     buy_url: str = ""             # ссылка для кнопки (опционально)
     avg_stars: Optional[float] = None   # среднее за последние N продаж
     avg_count: int = 0                  # сколько продаж учтено в среднем
+    floor_stars: Optional[int] = None   # флор (самый дешёвый другой на рынке)
+    discount_pct: Optional[float] = None  # на сколько % ниже флора
 
     @staticmethod
     def parse(text: str) -> "StarGift":
@@ -547,27 +549,15 @@ class TelegramNotifier:
             f"🎨  Backdrop:    <b>{g.backdrop}</b>",
             f"💰  Цена:        <b>{price_str}</b>",
         ]
-        if g.xgift is not None:
-            lines.append(f"📊  Xgift   •   <b>{g.xgift}</b>")
         if g.seller:
             lines.append(f"👤  Продавец:   <b>{g.seller}</b>")
 
-        # Средняя цена по истории
-        if g.avg_stars is not None and g.avg_count > 0:
-            delta_str = ""
-            if g.stars_price is not None:
-                delta = g.stars_price - g.avg_stars
-                sign = "+" if delta >= 0 else "−"
-                delta_str = f"  ({sign}{abs(delta):.0f} ⭐ от среднего)"
-            lines.append(
-                f"📈  Ср. цена:   <b>{g.avg_stars:.0f} ⭐</b>"
-                f"  <i>по {g.avg_count} прод.{delta_str}</i>"
-            )
-        elif g.avg_count == 0:
-            lines.append(f"📈  Ср. цена:   <i>нет данных (первая запись)</i>")
+        # Флор и скидка относительно рынка
+        if g.floor_stars is not None:
+            lines.append(f"🏷  Флор:        <b>{g.floor_stars} ⭐</b>")
+        if g.discount_pct is not None:
+            lines.append(f"🔥  Выгода:      <b>−{g.discount_pct:.0f}% от флора</b>")
 
-        if g.buy_url:
-            lines += ["", f'🔗 <a href="{g.buy_url}">Смотреть подарок</a>']
         return "\n".join(lines)
 
     @staticmethod
@@ -621,7 +611,7 @@ class TelegramNotifier:
         """Отправляет StarGift (внутренний рынок TG) в канал."""
         markup = None
         if gift.buy_url:
-            markup = self._inline_button("🛒 Купить", gift.buy_url)
+            markup = self._inline_button("🎁 Открыть подарок", gift.buy_url)
         return await self._send_message(self._format_star_gift(gift), markup)
 
     async def send_fragment_gift(self, listing: "Listing") -> bool:
