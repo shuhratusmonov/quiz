@@ -552,10 +552,9 @@ class TelegramNotifier:
         if g.seller:
             lines.append(f"👤  Продавец:   <b>{g.seller}</b>")
 
-        # Флор и скидка относительно рынка
-        if g.floor_stars is not None:
+        # Флор и скидка относительно рынка (только если есть реальная выгода)
+        if g.floor_stars is not None and g.discount_pct is not None and g.discount_pct > 0:
             lines.append(f"🏷  Флор:        <b>{g.floor_stars} ⭐</b>")
-        if g.discount_pct is not None:
             lines.append(f"🔥  Выгода:      <b>−{g.discount_pct:.0f}% от флора</b>")
 
         return "\n".join(lines)

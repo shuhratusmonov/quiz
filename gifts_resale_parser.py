@@ -330,7 +330,7 @@ def print_gift(g: StarGift, idx: int = 0):
     backdrop = f"  [{g.backdrop}]" if g.backdrop else ""
     print(f"{prefix}{BOLD}{g.model}{RESET}{backdrop}")
     print(f"       💰 {price}{avg}   👤 {g.seller}")
-    if g.floor_stars is not None and g.discount_pct is not None:
+    if g.floor_stars is not None and g.discount_pct is not None and g.discount_pct > 0:
         print(f"       🏷 Флор {g.floor_stars} ⭐  "
               f"{GREEN}🔥 −{g.discount_pct:.0f}% от флора{RESET}")
     if g.buy_url:
@@ -341,19 +341,29 @@ def print_gift(g: StarGift, idx: int = 0):
 # ─── Оценка лота (флор/скидка) ───────────────────────────────────────────────
 
 def _evaluate(g: StarGift, priced: list, args) -> Tuple[bool, bool]:
-    """Считает флор и скидку лота. Возвращает (можно_слать, можно_покупать).
-    priced — список лотов этой модели с ценами (для расчёта флора)."""
+    """Считает флор/скидку и решает, слать и/или покупать лот.
+    Возвращает (можно_слать, можно_покупать).
+    priced — лоты этой модели с ценами (для расчёта флора)."""
     if g.stars_price is None:
         return False, False
+
     others = [x.stars_price for x in priced if x is not g]
-    if not others:
-        return False, False
-    floor = min(others)
-    discount = (floor - g.stars_price) / floor * 100.0
+    floor = min(others) if others else None
+    discount = ((floor - g.stars_price) / floor * 100.0) if floor else None
     g.floor_stars = floor
     g.discount_pct = discount
-    send_ok = discount >= args.min_discount
-    buy_ok = args.auto_buy and discount >= args.buy_min_discount
+
+    # Отправка в канал: нужна скидка от флора >= порога
+    send_ok = discount is not None and discount >= args.min_discount
+
+    # Покупка: цена в пределах лимита И (если задан) скидка от флора
+    buy_ok = False
+    if args.auto_buy:
+        price_ok = (args.buy_max_price <= 0) or (g.stars_price <= args.buy_max_price)
+        disc_ok = (args.buy_min_discount <= 0) or (
+            discount is not None and discount >= args.buy_min_discount
+        )
+        buy_ok = price_ok and disc_ok
     return send_ok, buy_ok
 
 
@@ -397,8 +407,10 @@ async def sniper_loop(market, notifier, history, args, targets, buy_state):
                     continue
 
                 ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-                print(f"{BOLD}[{ts}] {g.model} — {g.stars_price} ⭐ "
-                      f"(−{g.discount_pct:.0f}% от флора {g.floor_stars}){RESET}")
+                extra = ""
+                if g.discount_pct is not None and g.discount_pct > 0:
+                    extra = f" (−{g.discount_pct:.0f}% от флора {g.floor_stars})"
+                print(f"{BOLD}[{ts}] {g.model} — {g.stars_price} ⭐{extra}{RESET}")
 
                 # ПОКУПКА ПЕРВОЙ — ради скорости
                 if buy_ok:
@@ -427,9 +439,10 @@ async def _try_buy(market, args, buy_state, g: StarGift):
     slug = _slug_from(g)
     dry = args._buy_dry
 
-    # Предохранитель 0: скидка для ПОКУПКИ может быть строже, чем для отправки
-    if g.discount_pct is None or g.discount_pct < args.buy_min_discount:
-        return  # не дотягивает до порога покупки — молча пропускаем
+    # Предохранитель 0: порог скидки от флора (если задан > 0)
+    if args.buy_min_discount > 0:
+        if g.discount_pct is None or g.discount_pct < args.buy_min_discount:
+            return  # не дотягивает до порога скидки — пропускаем
 
     # Предохранитель 1: цена за подарок
     if args.buy_max_price > 0 and price > args.buy_max_price:
@@ -484,34 +497,20 @@ async def scan_once(market, notifier, history, args, target, buy_state) -> Tuple
             history.enrich(g, n=10)     # средняя ДО записи текущей
             history.record(g)           # сохраняем в историю цен
 
-            if g.stars_price is None:
+            send_ok, buy_ok = _evaluate(g, priced, args)
+
+            # Доп. фильтр "ниже средней" — ограничивает только отправку
+            if send_ok and args.below_average:
+                if (g.avg_stars is None or (g.stars_price or 0) >= g.avg_stars):
+                    send_ok = False
+
+            if not (send_ok or buy_ok):
                 continue
 
-            # Флор = самый дешёвый ДРУГОЙ подарок этой модели на рынке
-            others = [x.stars_price for x in priced if x is not g]
-            if not others:
-                continue  # один лот — не с чем сравнивать
-            floor = min(others)
-
-            # Насколько этот лот дешевле флора (в %)
-            discount = (floor - g.stars_price) / floor * 100.0
-
-            # Отправляем только если цена ниже флора минимум на N%
-            if discount < args.min_discount:
-                continue
-
-            g.floor_stars = floor
-            g.discount_pct = discount
-
-            # Доп. фильтр "ниже средней" (если включён)
-            if args.below_average:
-                if (g.avg_stars is None or g.stars_price >= g.avg_stars):
-                    continue
-
-            # Антиповтор: если уже обрабатывали это объявление — пропускаем
-            # (учитывает и отправку, и покупку)
+            # Антиповтор активен только при реальном действии (отправка/покупка)
+            tracking = bool(notifier) or args.auto_buy
             gift_key = g.buy_url or f"{g.model}|{g.stars_price}|{g.seller}"
-            if (notifier or args.auto_buy) and history.was_sent(gift_key):
+            if tracking and history.was_sent(gift_key):
                 continue
 
             if not printed_header:
@@ -521,17 +520,18 @@ async def scan_once(market, notifier, history, args, target, buy_state) -> Tuple
             print_gift(g, i)
             total_found += 1
 
-            if notifier:
+            if send_ok and notifier:
                 ok = await notifier.send_star_gift(g)
                 if ok:
                     total_sent += 1
-                    history.mark_sent(gift_key)
                     print(f"       {GREEN}✓ отправлено в {args.channel}{RESET}")
                 await asyncio.sleep(args.delay)
 
             # ── Автопокупка ──
-            if args.auto_buy:
+            if buy_ok:
                 await _try_buy(market, args, buy_state, g)
+
+            if tracking:
                 history.mark_sent(gift_key)  # не обрабатывать повторно
 
     suffix = f", отправлено {total_sent}" if notifier else ""
@@ -712,20 +712,24 @@ async def main():
 
     # ── Настройка автопокупки с предохранителями ──
     buy_state = {"spent": 0, "bought": 0}
+    # Описание условия покупки (цена и/или скидка от флора)
+    conds = []
+    if args.buy_max_price > 0:
+        conds.append(f"дешевле {args.buy_max_price} ⭐")
+    if args.buy_min_discount > 0:
+        conds.append(f"ниже флора на {args.buy_min_discount:.0f}%+")
+    cond_str = " и ".join(conds) if conds else "ЛЮБОЙ лот (нет условий!)"
+
     if args.auto_buy:
         # Реальная покупка возможна только при заданном бюджете > 0
         if args.buy_real and args.buy_budget > 0:
             print(f"{RED}🛒 АВТОПОКУПКА ВКЛЮЧЕНА (РЕАЛЬНЫЕ ТРАТЫ){RESET}")
-            print(f"{RED}   Условие: ниже флора на {args.buy_min_discount:.0f}%+, "
-                  f"бюджет {args.buy_budget} ⭐"
-                  + (f", не дороже {args.buy_max_price} ⭐/шт" if args.buy_max_price else "")
-                  + f"{RESET}")
+            print(f"{RED}   Условие: {cond_str}, бюджет {args.buy_budget} ⭐{RESET}")
             args._buy_dry = False
         else:
             reason = "не задан buy_budget>0" if args.buy_real else "режим теста"
             print(f"{YELLOW}🛒 Автопокупка в ТЕСТОВОМ режиме (dry-run): {reason}.{RESET}")
-            print(f"{YELLOW}   Условие покупки: ниже флора на "
-                  f"{args.buy_min_discount:.0f}%+. Реальные траты НЕ выполняются.{RESET}")
+            print(f"{YELLOW}   Условие: {cond_str}. Реальные траты НЕ выполняются.{RESET}")
             print(f"{YELLOW}   Для реальной покупки: buy_real=1 и buy_budget>0 "
                   f"в config.txt.{RESET}")
             args._buy_dry = True
