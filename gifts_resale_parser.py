@@ -636,6 +636,69 @@ async def scan_once(market, notifier, history, args, target, buy_state) -> Tuple
     return total_found, total_sent
 
 
+# ─── Монитор продаж одной коллекции ──────────────────────────────────────────
+
+async def watch_sales_loop(market, args, history, collection):
+    """Живой монитор продаж: следит за лотами коллекции; исчезнувший лот
+    фиксируется как продажа. Держит статистику последних N продаж."""
+    from datetime import datetime
+    title = collection["title"]
+    n_stat = args.watch_last
+
+    print(f"\n{BOLD}📈 МОНИТОР ПРОДАЖ: {title}{RESET}")
+    print(f"{GREEN}   Опрос каждые {args.watch_interval} сек, окно топ-{args.watch_depth} "
+          f"дешёвых лотов, статистика последних {n_stat} продаж{RESET}")
+    print(f"{CYAN}   (лот исчез ≈ продан; оценка приблизительная. Ctrl+C — стоп){RESET}\n")
+
+    def print_stats():
+        rows = history.recent_sales(title, n_stat)
+        prices = [r[0] for r in rows]
+        if not prices:
+            print(f"  {YELLOW}Продаж пока не зафиксировано.{RESET}")
+            return
+        avg = sum(prices) / len(prices)
+        print(f"  {BOLD}Последние {len(prices)} продаж:{RESET} "
+              f"средняя {avg:.0f} ⭐ · мин {min(prices)} ⭐ · макс {max(prices)} ⭐")
+
+    # Первый снимок
+    gifts = await market.resale_listings(collection["id"], limit=args.watch_depth)
+    prev = {_slug_from(g): g.stars_price for g in gifts if _slug_from(g)}
+    floor = min((p for p in prev.values() if p is not None), default=None)
+    print(f"  Стартовый снимок: {len(prev)} лотов, флор "
+          f"{floor if floor is not None else '—'} ⭐")
+    print_stats()
+
+    cycle = 0
+    session_sales = 0
+    while True:
+        await asyncio.sleep(args.watch_interval)
+        cycle += 1
+        gifts = await market.resale_listings(collection["id"], limit=args.watch_depth)
+        cur = {_slug_from(g): g.stars_price for g in gifts if _slug_from(g)}
+
+        sold_slugs = set(prev) - set(cur)
+        for slug in sorted(sold_slugs, key=lambda s: prev.get(s) or 0):
+            price = prev.get(slug)
+            history.record_sale(title, slug, price)
+            session_sales += 1
+            ts = datetime.now().strftime("%H:%M:%S")
+            price_str = f"{price} ⭐" if price is not None else "—"
+            print(f"{BOLD}[{ts}] 💸 ПРОДАНО: {slug} за {price_str}{RESET}")
+
+        if sold_slugs:
+            print_stats()
+            floor = min((p for p in cur.values() if p is not None), default=None)
+            print(f"  Текущий флор: {floor if floor is not None else '—'} ⭐, "
+                  f"лотов в окне: {len(cur)}\n")
+
+        # Пульс раз в ~60 циклов
+        if cycle % 60 == 0:
+            ts = datetime.now().strftime("%H:%M:%S")
+            print(f"{CYAN}· {ts}: слежу, продаж за сессию {session_sales}{RESET}")
+
+        prev = cur
+
+
 # ─── Отчёт "топ продаваемых" ─────────────────────────────────────────────────
 
 async def top_report(market, args, collections):
@@ -805,6 +868,16 @@ async def main():
     ap.add_argument("--sniper-max-collections", type=int,
                     default=_cfg_int(cfg, "sniper_max_collections", 5),
                     help="Сколько коллекций брать при авто-выборе (default: 5)")
+    # ── Монитор продаж одной коллекции ──
+    ap.add_argument("--watch-sales", default="", metavar="НАЗВАНИЕ",
+                    help="Живой монитор продаж коллекции (напр. 'Snoop Dogg')")
+    ap.add_argument("--watch-interval", type=float, default=3,
+                    help="Период опроса монитора продаж, сек (default: 3)")
+    ap.add_argument("--watch-depth", type=int, default=50,
+                    help="Сколько дешёвых лотов держать в окне (default: 50)")
+    ap.add_argument("--watch-last", type=int, default=30,
+                    help="Сколько последних продаж в статистике (default: 30)")
+
     # ── Отчёт "топ продаваемых" ──
     ap.add_argument("--top", action="store_true",
                     help="Показать топ продаваемых подарков (замер продаж) и выйти")
@@ -943,6 +1016,25 @@ async def main():
         # ── Отчёт "топ продаваемых" ──
         if args.top:
             await top_report(market, args, collections)
+            return
+
+        # ── Монитор продаж одной коллекции ──
+        if args.watch_sales:
+            wanted = args.watch_sales.strip().lower()
+            found = [c for c in collections if c["title"].lower() == wanted]
+            if not found:
+                # частичное совпадение как подсказка
+                partial = [c for c in collections if wanted in c["title"].lower()]
+                if len(partial) == 1:
+                    found = partial
+                else:
+                    print(f"{RED}Коллекция '{args.watch_sales}' не найдена.{RESET}")
+                    if partial:
+                        print("Похожие: " + ", ".join(c["title"] for c in partial[:5]))
+                    else:
+                        print("Список доступных — запустите с --list")
+                    return
+            await watch_sales_loop(market, args, history, found[0])
             return
 
         # ── Снайперский режим ──

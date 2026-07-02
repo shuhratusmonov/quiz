@@ -162,6 +162,17 @@ class PriceHistory:
                     sent_at   TEXT DEFAULT (datetime('now','localtime'))
                 )
             """)
+            # Зафиксированные продажи (лот исчез с рынка)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS sales (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    collection  TEXT NOT NULL,
+                    slug        TEXT,
+                    stars_price INTEGER,
+                    sold_at     TEXT DEFAULT (datetime('now','localtime'))
+                )
+            """)
+            c.execute("CREATE INDEX IF NOT EXISTS idx_sales_coll ON sales(collection)")
             c.commit()
 
     def record(self, gift: "StarGift"):
@@ -205,6 +216,26 @@ class PriceHistory:
         gift.avg_stars = avg
         gift.avg_count = count
         return gift
+
+    def record_sale(self, collection: str, slug: str, stars_price: Optional[int]):
+        """Фиксирует продажу (лот исчез с рынка)."""
+        with sqlite3.connect(self.db_path) as c:
+            c.execute(
+                "INSERT INTO sales (collection, slug, stars_price) VALUES (?, ?, ?)",
+                (collection.strip(), slug, stars_price),
+            )
+            c.commit()
+
+    def recent_sales(self, collection: str, n: int = 30) -> List[Tuple[int, str]]:
+        """Последние N продаж коллекции: [(stars_price, sold_at), ...] новые первыми."""
+        with sqlite3.connect(self.db_path) as c:
+            rows = c.execute(
+                "SELECT stars_price, sold_at FROM sales "
+                "WHERE collection = ? AND stars_price IS NOT NULL "
+                "ORDER BY id DESC LIMIT ?",
+                (collection.strip(), n),
+            ).fetchall()
+        return rows
 
     def was_sent(self, gift_key: str) -> bool:
         """Проверяет, отправлялось ли уже это объявление в канал."""
