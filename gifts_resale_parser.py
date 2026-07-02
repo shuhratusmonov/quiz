@@ -636,6 +636,72 @@ async def scan_once(market, notifier, history, args, target, buy_state) -> Tuple
     return total_found, total_sent
 
 
+# ─── Отчёт "топ продаваемых" ─────────────────────────────────────────────────
+
+async def top_report(market, args, collections):
+    """Два снимка рынка с паузой: исчезнувшие лоты ≈ проданные.
+    Показывает топ коллекций по активности продаж."""
+    pool = collections[:args.top_collections]  # уже отсортированы по кол-ву лотов
+    wait = args.top_wait
+
+    print(f"\n{BOLD}📊 Замер продаж: {len(pool)} коллекций, "
+          f"пауза {wait} сек между снимками{RESET}")
+    print(f"{CYAN}   (исчезнувший лот ≈ продан; оценка приблизительная){RESET}\n")
+
+    async def snapshot():
+        snap = {}
+        for i, c in enumerate(pool):
+            if i > 0 and args.req_delay > 0:
+                await asyncio.sleep(args.req_delay)
+            gifts = await market.resale_listings(c["id"], limit=args.top_depth)
+            slugs = {_slug_from(g) for g in gifts if _slug_from(g)}
+            prices = [g.stars_price for g in gifts if g.stars_price is not None]
+            snap[c["id"]] = (slugs, min(prices) if prices else None)
+        return snap
+
+    print(f"{BOLD}Снимок 1/2...{RESET}")
+    snap1 = await snapshot()
+    print(f"{CYAN}⏳ Ждём {wait} сек...{RESET}")
+    await asyncio.sleep(wait)
+    print(f"{BOLD}Снимок 2/2...{RESET}")
+    snap2 = await snapshot()
+
+    rows = []
+    for c in pool:
+        s1, floor1 = snap1.get(c["id"], (set(), None))
+        s2, floor2 = snap2.get(c["id"], (set(), None))
+        sold = len(s1 - s2)         # были — исчезли
+        appeared = len(s2 - s1)     # новые выставленные
+        rows.append((c, sold, appeared, floor1, floor2))
+
+    rows.sort(key=lambda r: r[1], reverse=True)
+
+    mins = wait / 60
+    print(f"\n{BOLD}{'─'*68}{RESET}")
+    print(f"{BOLD}  ТОП ПРОДАВАЕМЫХ (за {mins:.0f} мин)  "
+          f"— продано / выставлено / флор{RESET}")
+    print(f"{BOLD}{'─'*68}{RESET}")
+    for i, (c, sold, appeared, f1, f2) in enumerate(rows, 1):
+        if sold == 0 and appeared == 0 and i > 10:
+            continue  # хвост без активности не показываем
+        floor_str = f"{f2} ⭐" if f2 is not None else "—"
+        trend = ""
+        if f1 is not None and f2 is not None and f1 != f2:
+            arrow = "↑" if f2 > f1 else "↓"
+            trend = f"  (флор {arrow} {f1}→{f2})"
+        hot = " 🔥" if sold >= 5 else ""
+        print(f"  {CYAN}{i:>3}.{RESET} {BOLD}{c['title']}{RESET}{hot}")
+        print(f"       продано ~{sold}  ·  новых {appeared}  ·  "
+              f"в продаже {c['resale']}  ·  флор {floor_str}{trend}")
+    total_sold = sum(r[1] for r in rows)
+    print(f"\n{BOLD}Всего продано за период: ~{total_sold} "
+          f"(~{total_sold / max(mins, 1):.1f} в минуту){RESET}")
+    speed_hint = [r for r in rows[:3] if r[1] > 0]
+    if speed_hint:
+        names = ", ".join(r[0]["title"] for r in speed_hint)
+        print(f"{GREEN}Самые горячие: {names}{RESET}")
+
+
 # ─── Конфиг-файл ─────────────────────────────────────────────────────────────
 
 def load_config(path: str) -> dict:
@@ -739,6 +805,16 @@ async def main():
     ap.add_argument("--sniper-max-collections", type=int,
                     default=_cfg_int(cfg, "sniper_max_collections", 5),
                     help="Сколько коллекций брать при авто-выборе (default: 5)")
+    # ── Отчёт "топ продаваемых" ──
+    ap.add_argument("--top", action="store_true",
+                    help="Показать топ продаваемых подарков (замер продаж) и выйти")
+    ap.add_argument("--top-wait", type=int, default=120,
+                    help="Сколько секунд ждать между замерами (default: 120)")
+    ap.add_argument("--top-collections", type=int, default=20,
+                    help="Сколько коллекций замерять (default: 20 самых активных)")
+    ap.add_argument("--top-depth", type=int, default=30,
+                    help="Сколько дешёвых лотов брать в снимок (default: 30)")
+
     ap.add_argument("--db-path", default=PriceHistory.DEFAULT_DB,
                     help=f"Файл истории цен (default: {PriceHistory.DEFAULT_DB})")
 
@@ -862,6 +938,11 @@ async def main():
                 print(f"  • {BOLD}{c['title']}{RESET}  "
                       f"(в продаже: {c['resale']}, от {floor})")
             print(f"\nДальше: --collection \"Название\"  или  --all")
+            return
+
+        # ── Отчёт "топ продаваемых" ──
+        if args.top:
+            await top_report(market, args, collections)
             return
 
         # ── Снайперский режим ──
