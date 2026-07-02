@@ -77,6 +77,7 @@ class StarGift:
     xgift: Optional[float]        # оценка xgift
     seller: str                   # @username продавца
     buy_url: str = ""             # ссылка для кнопки (опционально)
+    pattern: str = ""             # узор/скин подарка
     avg_stars: Optional[float] = None   # среднее за последние N продаж
     avg_count: int = 0                  # сколько продаж учтено в среднем
     floor_stars: Optional[int] = None   # флор (самый дешёвый другой на рынке)

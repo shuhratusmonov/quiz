@@ -47,6 +47,7 @@ import argparse
 import asyncio
 import logging
 import os
+import re
 import sys
 from typing import List, Optional, Tuple
 
@@ -159,9 +160,11 @@ def unique_to_stargift(unique, users_by_id: dict) -> StarGift:
 
     model_a = _attr(attrs, "Model")
     backdrop_a = _attr(attrs, "Backdrop")
+    pattern_a = _attr(attrs, "Pattern")
 
     model_name = getattr(model_a, "name", "") if model_a else ""
     backdrop_name = getattr(backdrop_a, "name", "") if backdrop_a else ""
+    pattern_name = getattr(pattern_a, "name", "") if pattern_a else ""
 
     # rarity в API хранится в промилле (‰): 30 → 3.0%
     # Берём редкость модели, а если её нет — backdrop'а
@@ -189,6 +192,7 @@ def unique_to_stargift(unique, users_by_id: dict) -> StarGift:
         xgift=None,                       # оценка xgift есть только у сторонних агрегаторов
         seller=_seller_name(unique, users_by_id),
         buy_url=buy_url,
+        pattern=pattern_name,
     )
 
 
@@ -338,6 +342,64 @@ def print_gift(g: StarGift, idx: int = 0):
     print()
 
 
+# ─── Лимиты цен по атрибутам ──────────────────────────────────────────────────
+
+def load_limits(path: str) -> dict:
+    """Читает limits.txt: строки вида 'model:Plush Pepe=500', 'backdrop:Lemongrass=300',
+    'pattern:Camo=250'. Возвращает {('model','plush pepe'): 500, ...}."""
+    limits = {}
+    if not path or not os.path.exists(path):
+        return limits
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line or ":" not in line:
+                    continue
+                left, price = line.split("=", 1)
+                kind, name = left.split(":", 1)
+                kind = kind.strip().lower()
+                if kind not in ("model", "backdrop", "pattern"):
+                    continue
+                try:
+                    limits[(kind, name.strip().lower())] = int(re.sub(r"\D", "", price))
+                except ValueError:
+                    continue
+    except Exception as exc:
+        print(f"{YELLOW}Не удалось прочитать {path}: {exc}{RESET}")
+    return limits
+
+
+def _applicable_limit(g: StarGift, limits: dict) -> Optional[int]:
+    """Минимальный из лимитов, подходящих подарку (по модели/фону/узору)."""
+    if not limits:
+        return None
+    base_model = (g.model or "").split(" #")[0].strip().lower()
+    matched = []
+    for (kind, name), price in limits.items():
+        if kind == "model" and name == base_model:
+            matched.append(price)
+        elif kind == "backdrop" and name == (g.backdrop or "").strip().lower():
+            matched.append(price)
+        elif kind == "pattern" and name == (g.pattern or "").strip().lower():
+            matched.append(price)
+    return min(matched) if matched else None
+
+
+def _buy_price_ok(g: StarGift, args) -> bool:
+    """Проходит ли цена по лимитам покупки (прайс-лист или общий потолок)."""
+    price = g.stars_price or 0
+    limits = getattr(args, "_limits", None) or {}
+    if limits:
+        lim = _applicable_limit(g, limits)
+        # цена-потолок: индивидуальный лимит, иначе общий buy_max_price
+        cap = lim if lim is not None else args.buy_max_price
+        # если лимиты заданы, но этот подарок никуда не подходит и общего потолка нет — не берём
+        return cap > 0 and price <= cap
+    # без прайс-листа: старое поведение с общим потолком
+    return (args.buy_max_price <= 0) or (price <= args.buy_max_price)
+
+
 # ─── Оценка лота (флор/скидка) ───────────────────────────────────────────────
 
 def _evaluate(g: StarGift, priced: list, args) -> Tuple[bool, bool]:
@@ -356,10 +418,10 @@ def _evaluate(g: StarGift, priced: list, args) -> Tuple[bool, bool]:
     # Отправка в канал: нужна скидка от флора >= порога
     send_ok = discount is not None and discount >= args.min_discount
 
-    # Покупка: цена в пределах лимита И (если задан) скидка от флора
+    # Покупка: цена в пределах лимита (прайс-лист/потолок) И скидка (если задана)
     buy_ok = False
     if args.auto_buy:
-        price_ok = (args.buy_max_price <= 0) or (g.stars_price <= args.buy_max_price)
+        price_ok = _buy_price_ok(g, args)
         disc_ok = (args.buy_min_discount <= 0) or (
             discount is not None and discount >= args.buy_min_discount
         )
@@ -444,10 +506,12 @@ async def _try_buy(market, args, buy_state, g: StarGift):
         if g.discount_pct is None or g.discount_pct < args.buy_min_discount:
             return  # не дотягивает до порога скидки — пропускаем
 
-    # Предохранитель 1: цена за подарок
-    if args.buy_max_price > 0 and price > args.buy_max_price:
+    # Предохранитель 1: цена за подарок (прайс-лист по атрибутам / общий потолок)
+    if not _buy_price_ok(g, args):
+        lim = _applicable_limit(g, getattr(args, "_limits", None) or {})
+        cap = lim if lim is not None else args.buy_max_price
         print(f"       {YELLOW}⊘ покупка пропущена: {price} ⭐ дороже лимита "
-              f"{args.buy_max_price} ⭐{RESET}")
+              f"{cap} ⭐{RESET}")
         return
 
     # Предохранитель 2: бюджет на запуск (только для реальной покупки)
@@ -600,6 +664,8 @@ async def main():
     )
     ap.add_argument("--config", default="config.txt",
                     help="Файл настроек KEY=VALUE (default: config.txt)")
+    ap.add_argument("--limits", default=cfg.get("limits", "limits.txt"),
+                    help="Файл лимитов цен по модели/фону/узору (default: limits.txt)")
     ap.add_argument("--api-id", default=cfg.get("api_id") or os.getenv("TG_API_ID"),
                     help="Telegram API ID (config: api_id / env TG_API_ID)")
     ap.add_argument("--api-hash", default=cfg.get("api_hash") or os.getenv("TG_API_HASH"),
@@ -679,6 +745,11 @@ async def main():
     if cfg:
         print(f"{GREEN}⚙ Настройки загружены из {cfg_path}{RESET}")
 
+    # Прайс-лист лимитов по модели/фону/узору
+    args._limits = load_limits(args.limits)
+    if args._limits:
+        print(f"{GREEN}💲 Лимиты цен: {len(args._limits)} правил из {args.limits}{RESET}")
+
     if not args.api_id or not args.api_hash:
         print(f"{RED}Ошибка: нужны --api-id и --api-hash "
               f"(получить на https://my.telegram.org){RESET}")
@@ -715,9 +786,11 @@ async def main():
 
     # ── Настройка автопокупки с предохранителями ──
     buy_state = {"spent": 0, "bought": 0}
-    # Описание условия покупки (цена и/или скидка от флора)
+    # Описание условия покупки (прайс-лист / цена / скидка от флора)
     conds = []
-    if args.buy_max_price > 0:
+    if args._limits:
+        conds.append(f"по прайс-листу ({len(args._limits)} правил)")
+    elif args.buy_max_price > 0:
         conds.append(f"дешевле {args.buy_max_price} ⭐")
     if args.buy_min_discount > 0:
         conds.append(f"ниже флора на {args.buy_min_discount:.0f}%+")
