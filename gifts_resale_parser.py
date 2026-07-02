@@ -193,6 +193,7 @@ def unique_to_stargift(unique, users_by_id: dict) -> StarGift:
         seller=_seller_name(unique, users_by_id),
         buy_url=buy_url,
         pattern=pattern_name,
+        model_name=model_name,
     )
 
 
@@ -331,8 +332,9 @@ def print_gift(g: StarGift, idx: int = 0):
     if g.avg_stars is not None:
         avg = f"  {CYAN}(ср. {g.avg_stars:.0f} ⭐ по {g.avg_count}){RESET}"
     prefix = f"  {CYAN}{idx:>3}.{RESET} " if idx else "  "
-    backdrop = f"  [{g.backdrop}]" if g.backdrop else ""
-    print(f"{prefix}{BOLD}{g.model}{RESET}{backdrop}")
+    tags = [t for t in (g.model_name, g.backdrop, g.pattern) if t]
+    tag_str = f"  [{' · '.join(tags)}]" if tags else ""
+    print(f"{prefix}{BOLD}{g.model}{RESET}{tag_str}")
     print(f"       💰 {price}{avg}   👤 {g.seller}")
     if g.floor_stars is not None and g.discount_pct is not None and g.discount_pct > 0:
         print(f"       🏷 Флор {g.floor_stars} ⭐  "
@@ -344,57 +346,80 @@ def print_gift(g: StarGift, idx: int = 0):
 
 # ─── Лимиты цен по атрибутам ──────────────────────────────────────────────────
 
-def load_limits(path: str) -> dict:
-    """Читает limits.txt: строки вида 'model:Plush Pepe=500', 'backdrop:Lemongrass=300',
-    'pattern:Camo=250'. Возвращает {('model','plush pepe'): 500, ...}."""
-    limits = {}
+def load_limits(path: str) -> list:
+    """Читает limits.txt. Правило: набор условий через '+' и цена.
+    Примеры:
+      gift:Whip Cupcake+model:Resistant=700   (подарок И модель)
+      model:Resistant=700                      (любой с моделью Resistant)
+      backdrop:Black=300
+    Возвращает список [([('collection','whip cupcake'),('model','resistant')], 700), ...]"""
+    rules = []
     if not path or not os.path.exists(path):
-        return limits
+        return rules
     try:
         with open(path, encoding="utf-8-sig") as f:
             for line in f:
                 line = line.strip()
-                if not line or line.startswith("#") or "=" not in line or ":" not in line:
+                if not line or line.startswith("#") or "=" not in line:
                     continue
-                left, price = line.split("=", 1)
-                kind, name = left.split(":", 1)
-                kind = kind.strip().lower()
-                if kind not in ("model", "backdrop", "pattern"):
+                left, price = line.rsplit("=", 1)
+                conds = []
+                for part in left.split("+"):
+                    if ":" not in part:
+                        continue
+                    kind, val = part.split(":", 1)
+                    kind = kind.strip().lower()
+                    if kind in ("gift", "collection", "коллекция", "подарок"):
+                        kind = "collection"
+                    elif kind in ("model", "модель"):
+                        kind = "model"
+                    elif kind in ("backdrop", "фон"):
+                        kind = "backdrop"
+                    elif kind in ("pattern", "узор", "скин"):
+                        kind = "pattern"
+                    else:
+                        continue
+                    conds.append((kind, val.strip().lower()))
+                if not conds:
                     continue
-                try:
-                    limits[(kind, name.strip().lower())] = int(re.sub(r"\D", "", price))
-                except ValueError:
-                    continue
+                digits = re.sub(r"\D", "", price)
+                if digits:
+                    rules.append((conds, int(digits)))
     except Exception as exc:
         print(f"{YELLOW}Не удалось прочитать {path}: {exc}{RESET}")
-    return limits
+    return rules
 
 
-def _applicable_limit(g: StarGift, limits: dict) -> Optional[int]:
-    """Минимальный из лимитов, подходящих подарку (по модели/фону/узору)."""
-    if not limits:
+def _gift_attr(g: StarGift, kind: str) -> str:
+    if kind == "collection":
+        return (g.model or "").split(" #")[0].strip().lower()
+    if kind == "model":
+        return (g.model_name or "").strip().lower()
+    if kind == "backdrop":
+        return (g.backdrop or "").strip().lower()
+    if kind == "pattern":
+        return (g.pattern or "").strip().lower()
+    return ""
+
+
+def _applicable_limit(g: StarGift, rules: list) -> Optional[int]:
+    """Минимальная цена среди правил, ВСЕ условия которых подходят подарку."""
+    if not rules:
         return None
-    base_model = (g.model or "").split(" #")[0].strip().lower()
-    matched = []
-    for (kind, name), price in limits.items():
-        if kind == "model" and name == base_model:
-            matched.append(price)
-        elif kind == "backdrop" and name == (g.backdrop or "").strip().lower():
-            matched.append(price)
-        elif kind == "pattern" and name == (g.pattern or "").strip().lower():
-            matched.append(price)
+    matched = [price for conds, price in rules
+               if all(_gift_attr(g, k) == v for k, v in conds)]
     return min(matched) if matched else None
 
 
 def _buy_price_ok(g: StarGift, args) -> bool:
     """Проходит ли цена по лимитам покупки (прайс-лист или общий потолок)."""
     price = g.stars_price or 0
-    limits = getattr(args, "_limits", None) or {}
-    if limits:
-        lim = _applicable_limit(g, limits)
+    rules = getattr(args, "_limits", None) or []
+    if rules:
+        lim = _applicable_limit(g, rules)
         # цена-потолок: индивидуальный лимит, иначе общий buy_max_price
         cap = lim if lim is not None else args.buy_max_price
-        # если лимиты заданы, но этот подарок никуда не подходит и общего потолка нет — не берём
+        # если прайс-лист задан, но подарок никуда не подходит и общего потолка нет — не берём
         return cap > 0 and price <= cap
     # без прайс-листа: старое поведение с общим потолком
     return (args.buy_max_price <= 0) or (price <= args.buy_max_price)

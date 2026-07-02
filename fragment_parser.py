@@ -78,6 +78,7 @@ class StarGift:
     seller: str                   # @username продавца
     buy_url: str = ""             # ссылка для кнопки (опционально)
     pattern: str = ""             # узор/скин подарка
+    model_name: str = ""          # атрибут "модель" (напр. Resistant)
     avg_stars: Optional[float] = None   # среднее за последние N продаж
     avg_count: int = 0                  # сколько продаж учтено в среднем
     floor_stars: Optional[int] = None   # флор (самый дешёвый другой на рынке)
@@ -546,10 +547,13 @@ class TelegramNotifier:
         lines = [
             f"🎁 <b>{g.model}</b>",
             "",
-            f"🖼  Model:       <b>{g.model}</b>",
-            f"🎨  Backdrop:    <b>{g.backdrop}</b>",
-            f"💰  Цена:        <b>{price_str}</b>",
         ]
+        if g.model_name:
+            lines.append(f"🧬  Модель:      <b>{g.model_name}</b>")
+        lines.append(f"🎨  Backdrop:    <b>{g.backdrop}</b>")
+        if g.pattern:
+            lines.append(f"🌀  Узор:        <b>{g.pattern}</b>")
+        lines.append(f"💰  Цена:        <b>{price_str}</b>")
         if g.seller:
             lines.append(f"👤  Продавец:   <b>{g.seller}</b>")
 
