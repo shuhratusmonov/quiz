@@ -51,7 +51,8 @@ STATIC_DIR = os.path.dirname(os.path.abspath(__file__))
 PORTALS_AUTH = os.environ.get("PORTALS_AUTH", "").strip()
 if not PORTALS_AUTH:
     try:
-        with open(os.path.join(STATIC_DIR, "token.txt"), encoding="utf-8") as _f:
+        # utf-8-sig убирает BOM-метку, которую иногда добавляет Блокнот
+        with open(os.path.join(STATIC_DIR, "token.txt"), encoding="utf-8-sig") as _f:
             PORTALS_AUTH = _f.read().strip()
     except FileNotFoundError:
         pass
