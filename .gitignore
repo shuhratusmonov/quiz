@@ -1,0 +1,7 @@
+# Runtime state (auto-offer rules created at runtime)
+rules.json
+
+# Node / test artifacts
+node_modules/
+package.json
+package-lock.json

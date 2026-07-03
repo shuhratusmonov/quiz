@@ -285,14 +285,17 @@
 
 <!-- ============ AUTO TAB ============ -->
 <div class="tab-page" id="page-auto">
-    <div class="section-title">Авто-офферы</div>
+    <div id="engineBanner"></div>
+    <div class="section-title">Правила авто-офферов</div>
     <p style="color:var(--muted);font-size:12px;padding:0 14px 8px;line-height:1.5;">
-        Бот автоматически ставит офферы по вашим правилам, когда флор коллекции опускается до нужного уровня.
+        Движок на сервере следит за флором и ставит оффер, когда цена опускается до вашего порога — даже если приложение закрыто.
     </p>
     <div id="rulesList"></div>
-    <div style="padding:6px 14px 20px;">
-        <button class="cta" onclick="addRule()">➕ Новое правило</button>
+    <div style="padding:6px 14px 14px;">
+        <button class="cta" onclick="openRuleSheet()">➕ Новое правило</button>
     </div>
+    <div class="section-title" id="autoLogTitle" style="display:none;">Журнал движка</div>
+    <div id="autoLog"></div>
 </div>
 
 <!-- ============ HISTORY TAB ============ -->
@@ -410,10 +413,14 @@ let myOffers = [
     {id:3, col:'durov-cap',  price:39.0, qty:1, status:'accepted', ends:'—'},
     {id:4, col:'rocket',     price:2.7,  qty:5, status:'rejected', ends:'—'},
 ];
+// Правила приходят с сервера (rules.json). Fallback — на случай запуска
+// portals.html без server.py (движок тогда не работает, только показ).
 let rules = [
-    {id:1, col:'plush-pepe', maxPrice:11.5, enabled:true},
-    {id:2, col:'diamond',    maxPrice:8.0,  enabled:false},
+    {id:'demo1', col:'plush-pepe', maxPrice:11.5, expiration_days:0, max_nfts:1, enabled:true},
+    {id:'demo2', col:'diamond',    maxPrice:8.0,  expiration_days:7, max_nfts:1, enabled:false},
 ];
+let engineState = {live:false, interval:60, watching:false};
+let autoLog = [];
 let history = [
     {col:'crown',  action:'Оффер принят',  price:26.5, when:'Сегодня, 14:20', ok:true},
     {col:'heart',  action:'Оффер отклонён',price:5.8,  when:'Вчера, 21:05',  ok:false},
@@ -497,24 +504,181 @@ function renderOffers(){
     }).join('');
 }
 
+/* ---- Авто-офферы: загрузка с сервера ---- */
+async function loadRules(){
+    try{
+        const [rl, eng, lg] = await Promise.all([
+            fetch('/api/rules').then(r=>r.json()),
+            fetch('/api/rules/engine').then(r=>r.json()),
+            fetch('/api/rules/log').then(r=>r.json()),
+        ]);
+        rules = Array.isArray(rl) ? rl : (rl.rules||[]);
+        engineState = eng || engineState;
+        autoLog = Array.isArray(lg) ? lg : (lg.log||[]);
+        engineState.serverless = false;
+    }catch(e){
+        // server.py не запущен — остаёмся на локальном fallback без движка
+        engineState = {live:false, interval:0, watching:false, serverless:true};
+    }
+    renderRules();
+}
+
 /* ---- Рендер авто-правил ---- */
+function renderEngineBanner(){
+    const el = document.getElementById('engineBanner');
+    let txt, col, ic;
+    if(engineState.serverless){ txt='Движок недоступен — запустите server.py'; col='var(--muted)'; ic='○'; }
+    else if(!apiConnected){     txt='Движок ждёт токен (демо). Правила сохраняются, но офферы не ставятся'; col='var(--amber)'; ic='●'; }
+    else if(engineState.live){  txt=`Движок активен · реальные офферы · проверка каждые ${engineState.interval}с`; col='var(--green)'; ic='●'; }
+    else{                       txt=`Режим наблюдения · офферы НЕ ставятся (включите AUTO_LIVE=1) · каждые ${engineState.interval}с`; col='var(--accent)'; ic='●'; }
+    el.innerHTML = `<div style="margin:8px 14px 2px;padding:11px 13px;background:var(--card);border:1px solid var(--line);border-radius:12px;font-size:12px;color:var(--muted);display:flex;align-items:center;gap:8px;">
+        <span style="color:${col};font-size:15px;">${ic}</span><span>${txt}</span></div>`;
+}
+
 function renderRules(){
+    renderEngineBanner();
     const el = document.getElementById('rulesList');
     if(!rules.length){
-        el.innerHTML = `<div class="empty"><div class="ic">⚡</div><p>Нет активных правил.</p></div>`;
-        return;
+        el.innerHTML = `<div class="empty"><div class="ic">⚡</div><p>Пока нет правил.<br>Добавьте первое ниже.</p></div>`;
+    }else{
+        el.innerHTML = rules.map(r=>{
+            const c = byId(r.col);
+            const met = c.floor>0 && c.floor<=r.maxPrice;
+            const exp = r.expiration_days===7 ? '7 дней' : 'бессрочно';
+            return `
+            <div class="rule">
+                <div class="top">
+                    <div class="nm"><span class="thumb" style="width:28px;height:28px;border-radius:8px;background:${c.bg};display:inline-flex;align-items:center;justify-content:center;font-size:15px;">${c.icon}</span>${c.name}</div>
+                    <label class="switch"><input type="checkbox" ${r.enabled?'checked':''} onchange="toggleRule('${r.id}')"><span class="slider"></span></label>
+                </div>
+                <div class="desc">Ставить оффер <b>${fmt(r.maxPrice)} TON</b> (${r.max_nfts||1} шт, ${exp}), когда флор ≤ <b>${fmt(r.maxPrice)}</b>.<br>Текущий флор: <b>${c.floor>0?fmt(c.floor)+' TON':'—'}</b> · ${r.enabled ? (met?'✅ условие выполнено':'⏳ ждём снижения') : '⏸ выключено'}</div>
+                <div class="actions" style="margin-top:11px;">
+                    <button onclick="openRuleSheet('${r.id}')">✏️ Изменить</button>
+                    <button class="danger" onclick="deleteRule('${r.id}')">🗑 Удалить</button>
+                </div>
+            </div>`;
+        }).join('');
     }
-    el.innerHTML = rules.map(r=>{
-        const c = byId(r.col);
-        return `
-        <div class="rule">
-            <div class="top">
-                <div class="nm"><span class="thumb" style="width:28px;height:28px;border-radius:8px;background:${c.bg};display:inline-flex;align-items:center;justify-content:center;font-size:16px;">${c.icon}</span>${c.name}</div>
-                <label class="switch"><input type="checkbox" ${r.enabled?'checked':''} onchange="toggleRule(${r.id})"><span class="slider"></span></label>
+
+    // журнал
+    const logTitle = document.getElementById('autoLogTitle');
+    const logEl = document.getElementById('autoLog');
+    if(autoLog.length){
+        logTitle.style.display='block';
+        logEl.innerHTML = autoLog.slice(0,20).map(e=>{
+            const c = byId(e.collection_id||e.col||'');
+            const icon = e.event==='placed'?'✅':e.event==='would_fire'?'👀':e.event==='error'?'⚠️':'•';
+            return `<div style="margin:0 14px 8px;padding:11px 13px;background:var(--card);border:1px solid var(--line);border-radius:12px;font-size:12px;">
+                <div style="display:flex;justify-content:space-between;"><b>${icon} ${e.message||e.event}</b><span style="color:var(--muted)">${e.time||''}</span></div>
+                ${e.collection_id?`<div style="color:var(--muted);margin-top:3px;">${c.name}${e.amount?' · '+fmt(e.amount)+' TON':''}</div>`:''}
+            </div>`;
+        }).join('');
+    }else{
+        logTitle.style.display='none'; logEl.innerHTML='';
+    }
+}
+
+/* ---- Лист создания/редактирования правила ---- */
+let ruleDraft = null;
+function openRuleSheet(id){
+    const existing = id ? rules.find(r=>String(r.id)===String(id)) : null;
+    const firstCol = collections[0] || {id:'',floor:0};
+    ruleDraft = existing
+        ? {id:existing.id, col:existing.col, maxPrice:existing.maxPrice, expiration_days:existing.expiration_days||0, max_nfts:existing.max_nfts||1}
+        : {id:null, col:firstCol.id, maxPrice:+(firstCol.floor*0.95).toFixed(2)||1, expiration_days:0, max_nfts:1};
+    haptic('light');
+    renderRuleSheet();
+    document.getElementById('offerOverlay').classList.add('open');
+}
+function renderRuleSheet(){
+    const d = ruleDraft;
+    const opts = collections.map(c=>`<option value="${c.id}" ${c.id===d.col?'selected':''}>${c.name} · флор ${c.floor>0?fmt(c.floor):'—'}</option>`).join('');
+    document.getElementById('offerSheet').innerHTML = `
+        <div class="grabber"></div>
+        <div class="sh-head">
+            <div class="thumb" style="background:${byId(d.col).bg}">${byId(d.col).icon}</div>
+            <div><div class="n">${d.id?'Изменить правило':'Новое правило'}</div><div class="s">Авто-оффер при снижении флора</div></div>
+        </div>
+
+        <div class="field">
+            <label>Коллекция</label>
+            <div class="price-input" style="padding:6px 10px;">
+                <select id="ruleCol" onchange="ruleDraft.col=this.value;renderRuleSheet()" style="flex:1;background:transparent;border:none;outline:none;color:var(--text);font-size:15px;font-weight:600;padding:8px 0;">${opts}</select>
             </div>
-            <div class="desc">Ставить оффер <b>${fmt(r.maxPrice)} TON</b>, когда флор ≤ <b>${fmt(r.maxPrice)}</b>. Текущий флор: <b>${fmt(c.floor)} TON</b>. ${c.floor<=r.maxPrice?'✅ условие выполнено':'⏳ ждём снижения'}</div>
-        </div>`;
-    }).join('');
+        </div>
+
+        <div class="field">
+            <label>Порог: ставить оффер, когда флор ≤</label>
+            <div class="price-input">
+                <span class="ton-ic">T</span>
+                <input type="number" inputmode="decimal" id="ruleMax" value="${d.maxPrice}" oninput="ruleDraft.maxPrice=parseFloat(this.value)||0;document.getElementById('ruleUsd').textContent=usd(ruleDraft.maxPrice)">
+                <span class="usd" id="ruleUsd">${usd(d.maxPrice)}</span>
+            </div>
+            <div class="quick">
+                <button onclick="setRuleMax(${(byId(d.col).floor*0.9).toFixed(2)})">-10% от флора</button>
+                <button onclick="setRuleMax(${byId(d.col).floor})">= флор</button>
+            </div>
+        </div>
+
+        <div class="field">
+            <label>Количество (max NFT)</label>
+            <div class="seg">${[1,2,3,5,10].map(n=>`<button class="${d.max_nfts===n?'on':''}" onclick="ruleDraft.max_nfts=${n};renderRuleSheet()">${n}</button>`).join('')}</div>
+        </div>
+
+        <div class="field">
+            <label>Срок оффера</label>
+            <div class="seg">
+                <button class="${d.expiration_days===0?'on':''}" onclick="ruleDraft.expiration_days=0;renderRuleSheet()">Бессрочно</button>
+                <button class="${d.expiration_days===7?'on':''}" onclick="ruleDraft.expiration_days=7;renderRuleSheet()">7 дней</button>
+            </div>
+        </div>
+
+        <button class="cta" onclick="saveRule()" ${d.maxPrice>0?'':'disabled'}>${d.id?'💾 Сохранить':'⚡ Создать правило'}</button>
+    `;
+}
+function setRuleMax(v){ ruleDraft.maxPrice=parseFloat(v)||0; renderRuleSheet(); }
+
+async function saveRule(){
+    const d = ruleDraft;
+    if(!d.maxPrice || d.maxPrice<=0) return;
+    const payload = {col:d.col, maxPrice:d.maxPrice, expiration_days:d.expiration_days, max_nfts:d.max_nfts, enabled:true};
+    try{
+        if(d.id){
+            await fetch('/api/rules/'+d.id, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+        }else{
+            await fetch('/api/rules', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+        }
+        haptic('success'); toast(d.id?'Правило сохранено':'Правило создано');
+    }catch(e){
+        // serverless fallback — правим локально
+        if(d.id){ Object.assign(rules.find(r=>String(r.id)===String(d.id)), payload); }
+        else{ rules.push({id:'loc'+Date.now(), ...payload}); }
+        toast('Сохранено локально (без сервера)');
+    }
+    closeSheet();
+    await loadRules();
+}
+
+async function toggleRule(id){
+    const r = rules.find(x=>String(x.id)===String(id));
+    if(!r) return;
+    const next = !r.enabled;
+    try{
+        await fetch('/api/rules/'+id, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({enabled:next})});
+    }catch(e){ r.enabled=next; }
+    haptic('light'); toast(next?'Правило включено':'Правило выключено');
+    await loadRules();
+}
+
+async function deleteRule(id){
+    const doDelete = async ()=>{
+        try{ await fetch('/api/rules/'+id, {method:'DELETE'}); }
+        catch(e){ rules = rules.filter(r=>String(r.id)!==String(id)); }
+        haptic('warning'); toast('Правило удалено');
+        await loadRules();
+    };
+    if(tg?.showConfirm) tg.showConfirm('Удалить правило?', ok=>{ if(ok) doDelete(); });
+    else if(confirm('Удалить правило?')) doDelete();
 }
 
 /* ---- Рендер истории ---- */
@@ -683,19 +847,6 @@ function editOffer(id){
     renderSheet();
 }
 
-/* ---- Авто-правила ---- */
-function toggleRule(id){
-    const r = rules.find(x=>x.id===id);
-    if(r){ r.enabled=!r.enabled; haptic('light'); toast(r.enabled?'Правило включено':'Правило выключено'); }
-}
-function addRule(){
-    // простое добавление правила по первой коллекции (в проде — форма выбора)
-    const free = collections.find(c=>!rules.some(r=>r.col===c.id)) || collections[0];
-    rules.push({id:Date.now(), col:free.id, maxPrice:+(free.floor*0.95).toFixed(1), enabled:true});
-    haptic('success'); toast('Правило добавлено');
-    renderRules();
-}
-
 /* ---- Навигация ---- */
 function switchTab(tab){
     document.querySelectorAll('.tab-page').forEach(p=>p.classList.remove('show'));
@@ -704,7 +855,7 @@ function switchTab(tab){
     haptic('light');
     window.scrollTo(0,0);
     if(tab==='offers') renderOffers();
-    if(tab==='auto') renderRules();
+    if(tab==='auto') loadRules();
     if(tab==='history') renderHistory();
 }
 
