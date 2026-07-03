@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Portals Offers</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+    :root{
+        --bg:#0f1116;
+        --card:#171a21;
+        --card-2:#1e222b;
+        --line:#262b36;
+        --text:#eef1f6;
+        --muted:#8a93a6;
+        --accent:#3aa0ff;
+        --accent-2:#2b8bec;
+        --green:#34c759;
+        --red:#ff4d5e;
+        --amber:#ffb020;
+        --ton:#0098ea;
+        --radius:16px;
+        --shadow:0 6px 24px rgba(0,0,0,.35);
+    }
+    *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+    html,body{height:100%;}
+    body{
+        font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+        background:var(--bg);
+        color:var(--text);
+        padding-bottom:84px;
+        overflow-x:hidden;
+    }
+    .safe{padding:12px 14px;}
+
+    /* ---------- Header ---------- */
+    .topbar{
+        display:flex;align-items:center;gap:10px;
+        padding:14px 14px 6px;
+    }
+    .topbar .logo{
+        width:38px;height:38px;border-radius:11px;
+        background:linear-gradient(135deg,#3aa0ff,#7b5cff);
+        display:flex;align-items:center;justify-content:center;
+        font-size:20px;flex-shrink:0;
+    }
+    .topbar .title{flex:1;}
+    .topbar .title h1{font-size:17px;font-weight:700;letter-spacing:.2px;}
+    .topbar .title p{font-size:12px;color:var(--muted);margin-top:1px;}
+    .balance{
+        background:var(--card);border:1px solid var(--line);
+        border-radius:12px;padding:8px 12px;text-align:right;
+    }
+    .balance .lbl{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;}
+    .balance .val{font-size:15px;font-weight:700;display:flex;align-items:center;gap:4px;justify-content:flex-end;}
+    .ton-ic{width:14px;height:14px;border-radius:50%;background:var(--ton);display:inline-flex;align-items:center;justify-content:center;font-size:9px;color:#fff;font-weight:700;}
+
+    /* ---------- Search ---------- */
+    .search{
+        display:flex;align-items:center;gap:8px;
+        background:var(--card);border:1px solid var(--line);
+        border-radius:12px;padding:11px 13px;margin:4px 14px 2px;
+    }
+    .search input{
+        flex:1;background:transparent;border:none;outline:none;
+        color:var(--text);font-size:15px;
+    }
+    .search input::placeholder{color:var(--muted);}
+
+    /* ---------- Filter chips ---------- */
+    .chips{display:flex;gap:8px;overflow-x:auto;padding:10px 14px;scrollbar-width:none;}
+    .chips::-webkit-scrollbar{display:none;}
+    .chip{
+        white-space:nowrap;padding:7px 14px;border-radius:20px;
+        background:var(--card);border:1px solid var(--line);
+        color:var(--muted);font-size:13px;font-weight:600;cursor:pointer;
+        transition:.15s;
+    }
+    .chip.active{background:var(--accent);border-color:var(--accent);color:#fff;}
+
+    /* ---------- Collection list ---------- */
+    .list{padding:2px 14px 20px;display:flex;flex-direction:column;gap:10px;}
+    .gift{
+        display:flex;align-items:center;gap:13px;
+        background:var(--card);border:1px solid var(--line);
+        border-radius:var(--radius);padding:12px;cursor:pointer;
+        transition:.15s;
+    }
+    .gift:active{transform:scale(.99);background:var(--card-2);}
+    .gift .thumb{
+        width:56px;height:56px;border-radius:14px;flex-shrink:0;
+        display:flex;align-items:center;justify-content:center;font-size:30px;
+        box-shadow:inset 0 0 0 1px rgba(255,255,255,.05);
+    }
+    .gift .info{flex:1;min-width:0;}
+    .gift .info .name{font-size:15px;font-weight:700;display:flex;align-items:center;gap:6px;}
+    .gift .info .sub{font-size:12px;color:var(--muted);margin-top:3px;}
+    .gift .info .sub b{color:var(--text);font-weight:600;}
+    .gift .right{text-align:right;flex-shrink:0;}
+    .gift .right .floor{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;}
+    .gift .right .price{font-size:15px;font-weight:700;display:flex;align-items:center;gap:4px;justify-content:flex-end;margin-top:2px;}
+    .delta{font-size:11px;font-weight:600;margin-top:3px;}
+    .delta.up{color:var(--green);}
+    .delta.down{color:var(--red);}
+    .badge{
+        font-size:9px;font-weight:700;padding:2px 6px;border-radius:6px;
+        text-transform:uppercase;letter-spacing:.3px;
+    }
+    .badge.hot{background:rgba(255,77,94,.15);color:var(--red);}
+    .badge.new{background:rgba(58,160,255,.15);color:var(--accent);}
+
+    /* ---------- My offers ---------- */
+    .section-title{font-size:13px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;padding:14px 14px 6px;}
+    .offer{
+        background:var(--card);border:1px solid var(--line);
+        border-radius:var(--radius);padding:13px;margin:0 14px 10px;
+    }
+    .offer .head{display:flex;align-items:center;gap:11px;}
+    .offer .head .thumb{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0;}
+    .offer .head .nm{flex:1;}
+    .offer .head .nm .n{font-size:14px;font-weight:700;}
+    .offer .head .nm .t{font-size:11px;color:var(--muted);margin-top:2px;}
+    .status{font-size:10px;font-weight:700;padding:4px 9px;border-radius:8px;text-transform:uppercase;letter-spacing:.3px;}
+    .status.active{background:rgba(58,160,255,.15);color:var(--accent);}
+    .status.accepted{background:rgba(52,199,89,.15);color:var(--green);}
+    .status.rejected{background:rgba(255,77,94,.15);color:var(--red);}
+    .status.expired{background:rgba(138,147,166,.15);color:var(--muted);}
+    .offer .meta{display:flex;justify-content:space-between;margin-top:11px;padding-top:11px;border-top:1px solid var(--line);}
+    .offer .meta .cell .l{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;}
+    .offer .meta .cell .v{font-size:14px;font-weight:700;margin-top:2px;display:flex;align-items:center;gap:3px;}
+    .offer .actions{display:flex;gap:8px;margin-top:11px;}
+    .offer .actions button{
+        flex:1;padding:9px;border-radius:10px;border:1px solid var(--line);
+        background:var(--card-2);color:var(--text);font-size:13px;font-weight:600;cursor:pointer;
+    }
+    .offer .actions button.danger{color:var(--red);border-color:rgba(255,77,94,.3);}
+    .offer .actions button.primary{background:var(--accent);border-color:var(--accent);color:#fff;}
+
+    /* ---------- Auto rules ---------- */
+    .rule{
+        background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+        padding:14px;margin:0 14px 10px;
+    }
+    .rule .top{display:flex;align-items:center;justify-content:space-between;}
+    .rule .top .nm{font-size:14px;font-weight:700;display:flex;align-items:center;gap:8px;}
+    .rule .desc{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.5;}
+    .rule .desc b{color:var(--text);}
+    .switch{position:relative;width:44px;height:26px;flex-shrink:0;}
+    .switch input{opacity:0;width:0;height:0;}
+    .slider{position:absolute;inset:0;background:var(--line);border-radius:20px;transition:.2s;cursor:pointer;}
+    .slider:before{content:"";position:absolute;width:20px;height:20px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s;}
+    .switch input:checked + .slider{background:var(--green);}
+    .switch input:checked + .slider:before{transform:translateX(18px);}
+
+    .empty{text-align:center;color:var(--muted);padding:60px 20px;}
+    .empty .ic{font-size:44px;margin-bottom:12px;}
+    .empty p{font-size:14px;line-height:1.5;}
+
+    /* ---------- Bottom nav ---------- */
+    .nav{
+        position:fixed;left:0;right:0;bottom:0;
+        background:rgba(15,17,22,.92);backdrop-filter:blur(12px);
+        border-top:1px solid var(--line);
+        display:flex;padding:8px 6px calc(8px + env(safe-area-inset-bottom));
+        z-index:50;
+    }
+    .nav button{
+        flex:1;background:none;border:none;color:var(--muted);
+        display:flex;flex-direction:column;align-items:center;gap:3px;
+        font-size:10px;font-weight:600;cursor:pointer;padding:4px;
+    }
+    .nav button .ic{font-size:20px;line-height:1;}
+    .nav button.active{color:var(--accent);}
+
+    /* ---------- Modal / sheet ---------- */
+    .overlay{
+        position:fixed;inset:0;background:rgba(0,0,0,.6);
+        opacity:0;pointer-events:none;transition:.2s;z-index:100;
+        display:flex;align-items:flex-end;
+    }
+    .overlay.open{opacity:1;pointer-events:auto;}
+    .sheet{
+        width:100%;background:var(--card);
+        border-radius:22px 22px 0 0;padding:8px 18px calc(20px + env(safe-area-inset-bottom));
+        transform:translateY(100%);transition:.28s cubic-bezier(.2,.8,.2,1);
+        max-height:90vh;overflow-y:auto;
+    }
+    .overlay.open .sheet{transform:translateY(0);}
+    .grabber{width:38px;height:4px;background:var(--line);border-radius:4px;margin:8px auto 16px;}
+    .sheet .sh-head{display:flex;align-items:center;gap:13px;margin-bottom:18px;}
+    .sheet .sh-head .thumb{width:52px;height:52px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:28px;}
+    .sheet .sh-head .n{font-size:17px;font-weight:700;}
+    .sheet .sh-head .s{font-size:12px;color:var(--muted);margin-top:2px;}
+
+    .field{margin-bottom:16px;}
+    .field label{font-size:12px;color:var(--muted);font-weight:600;display:block;margin-bottom:7px;text-transform:uppercase;letter-spacing:.3px;}
+    .price-input{
+        display:flex;align-items:center;gap:8px;
+        background:var(--card-2);border:1.5px solid var(--line);
+        border-radius:12px;padding:13px 14px;transition:.15s;
+    }
+    .price-input:focus-within{border-color:var(--accent);}
+    .price-input .ton-ic{width:20px;height:20px;font-size:11px;}
+    .price-input input{flex:1;background:transparent;border:none;outline:none;color:var(--text);font-size:20px;font-weight:700;}
+    .price-input .usd{font-size:12px;color:var(--muted);}
+    .quick{display:flex;gap:8px;margin-top:9px;}
+    .quick button{
+        flex:1;padding:8px;border-radius:9px;background:var(--card-2);
+        border:1px solid var(--line);color:var(--muted);font-size:12px;font-weight:600;cursor:pointer;
+    }
+    .quick button:active{border-color:var(--accent);color:var(--accent);}
+
+    .seg{display:flex;background:var(--card-2);border:1px solid var(--line);border-radius:11px;padding:3px;gap:3px;}
+    .seg button{flex:1;padding:9px;border:none;background:none;color:var(--muted);font-size:13px;font-weight:600;border-radius:8px;cursor:pointer;}
+    .seg button.on{background:var(--accent);color:#fff;}
+
+    .summary{background:var(--card-2);border:1px solid var(--line);border-radius:12px;padding:13px;margin-bottom:16px;}
+    .summary .row{display:flex;justify-content:space-between;font-size:13px;padding:4px 0;}
+    .summary .row .k{color:var(--muted);}
+    .summary .row .v{font-weight:600;}
+    .summary .row.total{border-top:1px solid var(--line);margin-top:6px;padding-top:9px;font-size:15px;}
+    .summary .row.total .v{color:var(--accent);}
+
+    .cta{
+        width:100%;padding:15px;border:none;border-radius:13px;
+        background:var(--accent);color:#fff;font-size:16px;font-weight:700;cursor:pointer;
+        display:flex;align-items:center;justify-content:center;gap:7px;
+    }
+    .cta:active{background:var(--accent-2);}
+    .cta:disabled{background:var(--line);color:var(--muted);}
+
+    .tab-page{display:none;}
+    .tab-page.show{display:block;animation:fade .2s;}
+    @keyframes fade{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+
+    .toast{
+        position:fixed;left:50%;bottom:100px;transform:translateX(-50%) translateY(20px);
+        background:var(--card-2);border:1px solid var(--line);color:var(--text);
+        padding:12px 18px;border-radius:12px;font-size:13px;font-weight:600;
+        box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:.25s;z-index:200;
+        display:flex;align-items:center;gap:8px;
+    }
+    .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+    .stat-row{display:flex;gap:10px;padding:2px 14px 8px;}
+    .stat{flex:1;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:13px;}
+    .stat .l{font-size:11px;color:var(--muted);}
+    .stat .v{font-size:19px;font-weight:800;margin-top:4px;display:flex;align-items:center;gap:4px;}
+</style>
+</head>
+<body>
+
+<!-- ============ TOP BAR ============ -->
+<div class="topbar">
+    <div class="logo">🎁</div>
+    <div class="title">
+        <h1>Portals Offers</h1>
+        <p id="subtitle">Маркет подарков Telegram</p>
+    </div>
+    <div class="balance">
+        <div class="lbl">Баланс</div>
+        <div class="val"><span class="ton-ic">T</span><span id="balance">128.4</span></div>
+    </div>
+</div>
+
+<!-- ============ MARKET TAB ============ -->
+<div class="tab-page show" id="page-market">
+    <div class="search">
+        <span>🔍</span>
+        <input type="text" id="searchInput" placeholder="Поиск коллекции..." oninput="renderMarket()">
+    </div>
+    <div class="chips" id="chips"></div>
+    <div class="list" id="marketList"></div>
+</div>
+
+<!-- ============ OFFERS TAB ============ -->
+<div class="tab-page" id="page-offers">
+    <div class="stat-row">
+        <div class="stat"><div class="l">Активных офферов</div><div class="v" id="statActive">0</div></div>
+        <div class="stat"><div class="l">В резерве</div><div class="v"><span class="ton-ic">T</span><span id="statLocked">0</span></div></div>
+    </div>
+    <div class="section-title">Мои офферы</div>
+    <div id="offersList"></div>
+</div>
+
+<!-- ============ AUTO TAB ============ -->
+<div class="tab-page" id="page-auto">
+    <div class="section-title">Авто-офферы</div>
+    <p style="color:var(--muted);font-size:12px;padding:0 14px 8px;line-height:1.5;">
+        Бот автоматически ставит офферы по вашим правилам, когда флор коллекции опускается до нужного уровня.
+    </p>
+    <div id="rulesList"></div>
+    <div style="padding:6px 14px 20px;">
+        <button class="cta" onclick="addRule()">➕ Новое правило</button>
+    </div>
+</div>
+
+<!-- ============ HISTORY TAB ============ -->
+<div class="tab-page" id="page-history">
+    <div class="section-title">История</div>
+    <div id="historyList"></div>
+</div>
+
+<!-- ============ BOTTOM NAV ============ -->
+<div class="nav">
+    <button class="active" data-tab="market" onclick="switchTab('market')"><span class="ic">🛒</span>Маркет</button>
+    <button data-tab="offers" onclick="switchTab('offers')"><span class="ic">🏷️</span>Офферы</button>
+    <button data-tab="auto" onclick="switchTab('auto')"><span class="ic">⚡</span>Авто</button>
+    <button data-tab="history" onclick="switchTab('history')"><span class="ic">🕐</span>История</button>
+</div>
+
+<!-- ============ OFFER SHEET ============ -->
+<div class="overlay" id="offerOverlay" onclick="if(event.target===this)closeSheet()">
+    <div class="sheet" id="offerSheet"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* =========================================================
+   Portals Offers — Telegram Web App (прототип на мок-данных)
+   Структура готова под подключение реального API Portals:
+   замените функции загрузки/отправки на реальные запросы.
+   ========================================================= */
+
+const tg = window.Telegram?.WebApp;
+const TON_USD = 5.2; // курс TON→USD (заглушка; подставьте из API)
+
+/* ---- Telegram init ---- */
+function initTelegram(){
+    if(!tg) return;
+    try{
+        tg.ready();
+        tg.expand();
+        // подхватываем тему Telegram, если задана
+        const p = tg.themeParams || {};
+        if(p.bg_color) document.documentElement.style.setProperty('--bg', p.bg_color);
+        if(p.secondary_bg_color) document.documentElement.style.setProperty('--card', p.secondary_bg_color);
+        if(p.text_color) document.documentElement.style.setProperty('--text', p.text_color);
+        if(p.hint_color) document.documentElement.style.setProperty('--muted', p.hint_color);
+        if(p.button_color) document.documentElement.style.setProperty('--accent', p.button_color);
+        tg.setHeaderColor?.('#0f1116');
+        const u = tg.initDataUnsafe?.user;
+        if(u) document.getElementById('subtitle').textContent = '@'+(u.username || u.first_name || 'user');
+    }catch(e){}
+}
+function haptic(type='light'){
+    try{
+        if(type==='success'||type==='error'||type==='warning') tg?.HapticFeedback?.notificationOccurred(type);
+        else tg?.HapticFeedback?.impactOccurred(type);
+    }catch(e){}
+}
+
+/* ---- Мок-данные коллекций ---- */
+const collections = [
+    {id:'plush-pepe', name:'Plush Pepe',      icon:'🐸', bg:'linear-gradient(135deg,#2e7d32,#66bb6a)', floor:12.5, best:11.8, delta:+8.2, supply:2340, cat:'meme',   tag:'hot'},
+    {id:'durov-cap',  name:"Durov's Cap",     icon:'🧢', bg:'linear-gradient(135deg,#1565c0,#42a5f5)', floor:42.0, best:40.5, delta:+2.1, supply:980,  cat:'rare',  tag:''},
+    {id:'diamond',    name:'Diamond Ring',    icon:'💍', bg:'linear-gradient(135deg,#00acc1,#26c6da)', floor:8.9,  best:8.4,  delta:-3.4, supply:5120, cat:'jewel', tag:''},
+    {id:'peach',      name:'Precious Peach',  icon:'🍑', bg:'linear-gradient(135deg,#ef6c00,#ffb74d)', floor:15.7, best:15.0, delta:+12.6,supply:1760, cat:'meme',  tag:'hot'},
+    {id:'rocket',     name:'Toy Rocket',      icon:'🚀', bg:'linear-gradient(135deg,#5e35b1,#9575cd)', floor:3.2,  best:2.9,  delta:+1.0, supply:8900, cat:'fun',   tag:'new'},
+    {id:'heart',      name:'Loot Heart',      icon:'💝', bg:'linear-gradient(135deg,#c2185b,#f06292)', floor:6.4,  best:6.1,  delta:-1.8, supply:4300, cat:'fun',   tag:''},
+    {id:'crown',      name:'Golden Crown',    icon:'👑', bg:'linear-gradient(135deg,#f9a825,#ffd54f)', floor:28.3, best:27.0, delta:+5.5, supply:1200, cat:'rare',  tag:''},
+    {id:'skull',      name:'Neon Skull',      icon:'💀', bg:'linear-gradient(135deg,#37474f,#78909c)', floor:9.1,  best:8.7,  delta:-0.5, supply:3600, cat:'fun',   tag:'new'},
+    {id:'star',       name:'Lucky Star',      icon:'⭐', bg:'linear-gradient(135deg,#fbc02d,#fff176)', floor:4.8,  best:4.5,  delta:+3.3, supply:7200, cat:'fun',   tag:''},
+    {id:'cake',       name:'Birthday Cake',   icon:'🎂', bg:'linear-gradient(135deg,#ad1457,#ec407a)', floor:5.6,  best:5.2,  delta:+0.9, supply:6100, cat:'fun',   tag:''},
+];
+
+const categories = [
+    {id:'all', name:'Все'},
+    {id:'hot', name:'🔥 Хиты'},
+    {id:'rare', name:'Редкие'},
+    {id:'meme', name:'Мемы'},
+    {id:'jewel', name:'Украшения'},
+    {id:'fun', name:'Разное'},
+];
+
+/* ---- Состояние ---- */
+let activeCat = 'all';
+let myOffers = [
+    {id:1, col:'plush-pepe', price:11.0, qty:1, status:'active',   ends:'2д 4ч'},
+    {id:2, col:'peach',      price:14.5, qty:2, status:'active',   ends:'18ч'},
+    {id:3, col:'durov-cap',  price:39.0, qty:1, status:'accepted', ends:'—'},
+    {id:4, col:'rocket',     price:2.7,  qty:5, status:'rejected', ends:'—'},
+];
+let rules = [
+    {id:1, col:'plush-pepe', maxPrice:11.5, enabled:true},
+    {id:2, col:'diamond',    maxPrice:8.0,  enabled:false},
+];
+let history = [
+    {col:'crown',  action:'Оффер принят',  price:26.5, when:'Сегодня, 14:20', ok:true},
+    {col:'heart',  action:'Оффер отклонён',price:5.8,  when:'Вчера, 21:05',  ok:false},
+    {col:'star',   action:'Оффер истёк',   price:4.4,  when:'2 дня назад',   ok:false},
+    {col:'peach',  action:'Оффер принят',  price:15.2, when:'3 дня назад',   ok:true},
+];
+let currentSheet = null; // выбранная коллекция для оффера
+
+const byId = id => collections.find(c=>c.id===id);
+const fmt = n => Number(n).toLocaleString('ru-RU',{maximumFractionDigits:2});
+const usd = ton => '≈ $'+fmt(ton*TON_USD);
+
+/* ---- Рендер маркета ---- */
+function renderChips(){
+    const el = document.getElementById('chips');
+    el.innerHTML = categories.map(c=>
+        `<div class="chip ${c.id===activeCat?'active':''}" onclick="setCat('${c.id}')">${c.name}</div>`
+    ).join('');
+}
+function setCat(id){ activeCat=id; haptic('light'); renderChips(); renderMarket(); }
+
+function renderMarket(){
+    const q = (document.getElementById('searchInput').value||'').toLowerCase().trim();
+    const list = collections.filter(c=>{
+        const okCat = activeCat==='all' ? true : (activeCat==='hot' ? c.tag==='hot' : c.cat===activeCat);
+        const okQ = !q || c.name.toLowerCase().includes(q);
+        return okCat && okQ;
+    });
+    const el = document.getElementById('marketList');
+    if(!list.length){ el.innerHTML = `<div class="empty"><div class="ic">🔍</div><p>Ничего не найдено</p></div>`; return; }
+    el.innerHTML = list.map(c=>`
+        <div class="gift" onclick="openOffer('${c.id}')">
+            <div class="thumb" style="background:${c.bg}">${c.icon}</div>
+            <div class="info">
+                <div class="name">${c.name} ${c.tag?`<span class="badge ${c.tag}">${c.tag==='hot'?'HOT':'NEW'}</span>`:''}</div>
+                <div class="sub">Предложений: <b>${fmt(c.supply)}</b> · лучший бид <b>${fmt(c.best)}</b></div>
+            </div>
+            <div class="right">
+                <div class="floor">Флор</div>
+                <div class="price"><span class="ton-ic">T</span>${fmt(c.floor)}</div>
+                <div class="delta ${c.delta>=0?'up':'down'}">${c.delta>=0?'▲':'▼'} ${Math.abs(c.delta)}%</div>
+            </div>
+        </div>
+    `).join('');
+}
+
+/* ---- Рендер моих офферов ---- */
+const statusLabel = {active:'Активен',accepted:'Принят',rejected:'Отклонён',expired:'Истёк'};
+function renderOffers(){
+    const el = document.getElementById('offersList');
+    const active = myOffers.filter(o=>o.status==='active');
+    const locked = active.reduce((s,o)=>s+o.price*o.qty,0);
+    document.getElementById('statActive').textContent = active.length;
+    document.getElementById('statLocked').textContent = fmt(locked);
+
+    if(!myOffers.length){
+        el.innerHTML = `<div class="empty"><div class="ic">🏷️</div><p>У вас пока нет офферов.<br>Откройте маркет и сделайте первый.</p></div>`;
+        return;
+    }
+    el.innerHTML = myOffers.map(o=>{
+        const c = byId(o.col);
+        return `
+        <div class="offer">
+            <div class="head">
+                <div class="thumb" style="background:${c.bg}">${c.icon}</div>
+                <div class="nm"><div class="n">${c.name}</div><div class="t">${o.qty} шт · истекает: ${o.ends}</div></div>
+                <div class="status ${o.status}">${statusLabel[o.status]}</div>
+            </div>
+            <div class="meta">
+                <div class="cell"><div class="l">Ваш оффер</div><div class="v"><span class="ton-ic">T</span>${fmt(o.price)}</div></div>
+                <div class="cell"><div class="l">Флор сейчас</div><div class="v"><span class="ton-ic">T</span>${fmt(c.floor)}</div></div>
+                <div class="cell"><div class="l">Сумма</div><div class="v"><span class="ton-ic">T</span>${fmt(o.price*o.qty)}</div></div>
+            </div>
+            ${o.status==='active'?`
+            <div class="actions">
+                <button onclick="editOffer(${o.id})">✏️ Изменить</button>
+                <button class="danger" onclick="cancelOffer(${o.id})">✖ Отменить</button>
+            </div>`:''}
+        </div>`;
+    }).join('');
+}
+
+/* ---- Рендер авто-правил ---- */
+function renderRules(){
+    const el = document.getElementById('rulesList');
+    if(!rules.length){
+        el.innerHTML = `<div class="empty"><div class="ic">⚡</div><p>Нет активных правил.</p></div>`;
+        return;
+    }
+    el.innerHTML = rules.map(r=>{
+        const c = byId(r.col);
+        return `
+        <div class="rule">
+            <div class="top">
+                <div class="nm"><span class="thumb" style="width:28px;height:28px;border-radius:8px;background:${c.bg};display:inline-flex;align-items:center;justify-content:center;font-size:16px;">${c.icon}</span>${c.name}</div>
+                <label class="switch"><input type="checkbox" ${r.enabled?'checked':''} onchange="toggleRule(${r.id})"><span class="slider"></span></label>
+            </div>
+            <div class="desc">Ставить оффер <b>${fmt(r.maxPrice)} TON</b>, когда флор ≤ <b>${fmt(r.maxPrice)}</b>. Текущий флор: <b>${fmt(c.floor)} TON</b>. ${c.floor<=r.maxPrice?'✅ условие выполнено':'⏳ ждём снижения'}</div>
+        </div>`;
+    }).join('');
+}
+
+/* ---- Рендер истории ---- */
+function renderHistory(){
+    const el = document.getElementById('historyList');
+    el.innerHTML = history.map(h=>{
+        const c = byId(h.col);
+        return `
+        <div class="offer" style="margin-bottom:8px;">
+            <div class="head">
+                <div class="thumb" style="background:${c.bg}">${c.icon}</div>
+                <div class="nm"><div class="n">${c.name}</div><div class="t">${h.when}</div></div>
+                <div class="status ${h.ok?'accepted':'expired'}">${h.action}</div>
+            </div>
+            <div class="meta" style="border:none;padding-top:8px;margin-top:8px;">
+                <div class="cell"><div class="l">Цена</div><div class="v"><span class="ton-ic">T</span>${fmt(h.price)}</div></div>
+                <div class="cell" style="text-align:right;"><div class="l">${usd(h.price)}</div></div>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+/* ---- Лист оффера ---- */
+function openOffer(id){
+    const c = byId(id);
+    currentSheet = {col:id, price:c.best, qty:1, dur:'3д'};
+    haptic('light');
+    renderSheet();
+    document.getElementById('offerOverlay').classList.add('open');
+}
+function renderSheet(){
+    const c = byId(currentSheet.col);
+    const s = currentSheet;
+    const total = s.price * s.qty;
+    document.getElementById('offerSheet').innerHTML = `
+        <div class="grabber"></div>
+        <div class="sh-head">
+            <div class="thumb" style="background:${c.bg}">${c.icon}</div>
+            <div><div class="n">${c.name}</div><div class="s">Флор ${fmt(c.floor)} TON · лучший бид ${fmt(c.best)} TON</div></div>
+        </div>
+
+        <div class="field">
+            <label>Цена оффера за 1 шт</label>
+            <div class="price-input">
+                <span class="ton-ic">T</span>
+                <input type="number" inputmode="decimal" id="priceField" value="${s.price}" oninput="onPrice(this.value)">
+                <span class="usd" id="usdHint">${usd(s.price)}</span>
+            </div>
+            <div class="quick">
+                <button onclick="setPrice(${(c.floor*0.9).toFixed(2)})">-10%</button>
+                <button onclick="setPrice(${c.best})">= бид</button>
+                <button onclick="setPrice(${c.floor})">= флор</button>
+                <button onclick="setPrice(${(c.floor*1.05).toFixed(2)})">+5%</button>
+            </div>
+        </div>
+
+        <div class="field">
+            <label>Количество</label>
+            <div class="seg">
+                ${[1,2,3,5,10].map(n=>`<button class="${s.qty===n?'on':''}" onclick="setQty(${n})">${n}</button>`).join('')}
+            </div>
+        </div>
+
+        <div class="field">
+            <label>Срок действия</label>
+            <div class="seg">
+                ${['12ч','1д','3д','7д'].map(d=>`<button class="${s.dur===d?'on':''}" onclick="setDur('${d}')">${d}</button>`).join('')}
+            </div>
+        </div>
+
+        <div class="summary">
+            <div class="row"><span class="k">Цена за 1</span><span class="v">${fmt(s.price)} TON</span></div>
+            <div class="row"><span class="k">Количество</span><span class="v">${s.qty} шт</span></div>
+            <div class="row"><span class="k">Комиссия сети</span><span class="v">~0.05 TON</span></div>
+            <div class="row total"><span class="k">Резерв</span><span class="v">${fmt(total+0.05)} TON</span></div>
+        </div>
+
+        <button class="cta" id="submitOffer" onclick="submitOffer()">🏷️ Поставить оффер · ${fmt(total)} TON</button>
+    `;
+    validateSheet();
+}
+function onPrice(v){ currentSheet.price = parseFloat(v)||0; document.getElementById('usdHint').textContent = usd(currentSheet.price); updateSummary(); }
+function setPrice(v){ currentSheet.price = parseFloat(v)||0; haptic('light'); renderSheet(); }
+function setQty(n){ currentSheet.qty = n; haptic('light'); renderSheet(); }
+function setDur(d){ currentSheet.dur = d; haptic('light'); renderSheet(); }
+function updateSummary(){ validateSheet(); }
+function validateSheet(){
+    const s = currentSheet, total = s.price*s.qty;
+    const btn = document.getElementById('submitOffer');
+    const ok = s.price>0 && s.qty>0 && (total+0.05)<=parseFloat(document.getElementById('balance').textContent);
+    if(btn){
+        btn.disabled = !ok;
+        btn.textContent = s.price<=0 ? 'Введите цену'
+            : (total+0.05>parseFloat(document.getElementById('balance').textContent) ? 'Недостаточно средств'
+            : `🏷️ Поставить оффер · ${fmt(total)} TON`);
+    }
+}
+function submitOffer(){
+    const s = currentSheet;
+    const durMap = {'12ч':'12ч','1д':'1д','3д':'3д','7д':'7д'};
+    myOffers.unshift({id:Date.now(), col:s.col, price:s.price, qty:s.qty, status:'active', ends:durMap[s.dur]});
+    // списываем резерв с баланса (заглушка)
+    const bal = parseFloat(document.getElementById('balance').textContent) - (s.price*s.qty+0.05);
+    document.getElementById('balance').textContent = fmt(bal);
+    haptic('success');
+    closeSheet();
+    toast('✅ Оффер поставлен');
+    renderOffers();
+    // Реальная интеграция: tg.sendData(JSON.stringify({action:'offer',...s}))
+    try{ tg?.sendData(JSON.stringify({action:'create_offer', collection:s.col, price:s.price, qty:s.qty, duration:s.dur})); }catch(e){}
+}
+function closeSheet(){ document.getElementById('offerOverlay').classList.remove('open'); }
+
+/* ---- Действия с офферами ---- */
+function cancelOffer(id){
+    const o = myOffers.find(x=>x.id===id);
+    if(!o) return;
+    if(tg?.showConfirm){
+        tg.showConfirm('Отменить оффер и вернуть резерв?', ok=>{ if(ok) doCancel(o); });
+    }else if(confirm('Отменить оффер?')){ doCancel(o); }
+}
+function doCancel(o){
+    const bal = parseFloat(document.getElementById('balance').textContent) + o.price*o.qty;
+    document.getElementById('balance').textContent = fmt(bal);
+    myOffers = myOffers.filter(x=>x.id!==o.id);
+    haptic('warning');
+    toast('Оффер отменён, резерв возвращён');
+    renderOffers();
+}
+function editOffer(id){
+    const o = myOffers.find(x=>x.id===id);
+    if(!o) return;
+    openOffer(o.col);
+    currentSheet.price = o.price; currentSheet.qty = o.qty;
+    renderSheet();
+}
+
+/* ---- Авто-правила ---- */
+function toggleRule(id){
+    const r = rules.find(x=>x.id===id);
+    if(r){ r.enabled=!r.enabled; haptic('light'); toast(r.enabled?'Правило включено':'Правило выключено'); }
+}
+function addRule(){
+    // простое добавление правила по первой коллекции (в проде — форма выбора)
+    const free = collections.find(c=>!rules.some(r=>r.col===c.id)) || collections[0];
+    rules.push({id:Date.now(), col:free.id, maxPrice:+(free.floor*0.95).toFixed(1), enabled:true});
+    haptic('success'); toast('Правило добавлено');
+    renderRules();
+}
+
+/* ---- Навигация ---- */
+function switchTab(tab){
+    document.querySelectorAll('.tab-page').forEach(p=>p.classList.remove('show'));
+    document.getElementById('page-'+tab).classList.add('show');
+    document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active', b.dataset.tab===tab));
+    haptic('light');
+    window.scrollTo(0,0);
+    if(tab==='offers') renderOffers();
+    if(tab==='auto') renderRules();
+    if(tab==='history') renderHistory();
+}
+
+/* ---- Toast ---- */
+let toastTimer;
+function toast(msg){
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(()=>t.classList.remove('show'), 2200);
+}
+
+/* ---- Старт ---- */
+initTelegram();
+renderChips();
+renderMarket();
+renderOffers();
+</script>
+</body>
+</html>
