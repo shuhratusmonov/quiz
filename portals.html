@@ -324,7 +324,35 @@
    ========================================================= */
 
 const tg = window.Telegram?.WebApp;
-const TON_USD = 5.2; // курс TON→USD (заглушка; подставьте из API)
+let TON_USD = 5.2; // курс TON→USD (заглушка; уточняется при подключении API)
+
+/* ---- Слой API ------------------------------------------------------------
+   Приложение сначала пытается тянуть реальные данные через бэкенд-прокси
+   (server.py на том же origin). Если прокси/токен недоступны — тихо
+   откатывается на мок-данные ниже и показывает бейдж «демо».            */
+const API_BASE = '/portals-api/';      // проксируется на portals-market.com/api/
+let apiConnected = false;
+
+async function api(path, {method='GET', body=null} = {}){
+    const res = await fetch(API_BASE + path, {
+        method,
+        headers: body ? {'Content-Type':'application/json'} : {},
+        body: body ? JSON.stringify(body) : null,
+    });
+    if(!res.ok){
+        const err = await res.json().catch(()=>({}));
+        throw new Error(err.error || ('HTTP '+res.status));
+    }
+    return res.json();
+}
+
+// Ровный цветной аватар для реальных подарков (у них нет эмодзи)
+function avatarBg(seed){
+    let h=0; for(const ch of String(seed)) h=(h*31+ch.charCodeAt(0))>>>0;
+    const a=h%360, b=(a+40)%360;
+    return `linear-gradient(135deg,hsl(${a} 60% 45%),hsl(${b} 65% 55%))`;
+}
+const initial = s => (String(s).trim()[0]||'?').toUpperCase();
 
 /* ---- Telegram init ---- */
 function initTelegram(){
@@ -351,8 +379,8 @@ function haptic(type='light'){
     }catch(e){}
 }
 
-/* ---- Мок-данные коллекций ---- */
-const collections = [
+/* ---- Мок-данные коллекций (fallback / демо-режим) ---- */
+let collections = [
     {id:'plush-pepe', name:'Plush Pepe',      icon:'🐸', bg:'linear-gradient(135deg,#2e7d32,#66bb6a)', floor:12.5, best:11.8, delta:+8.2, supply:2340, cat:'meme',   tag:'hot'},
     {id:'durov-cap',  name:"Durov's Cap",     icon:'🧢', bg:'linear-gradient(135deg,#1565c0,#42a5f5)', floor:42.0, best:40.5, delta:+2.1, supply:980,  cat:'rare',  tag:''},
     {id:'diamond',    name:'Diamond Ring',    icon:'💍', bg:'linear-gradient(135deg,#00acc1,#26c6da)', floor:8.9,  best:8.4,  delta:-3.4, supply:5120, cat:'jewel', tag:''},
@@ -394,7 +422,8 @@ let history = [
 ];
 let currentSheet = null; // выбранная коллекция для оффера
 
-const byId = id => collections.find(c=>c.id===id);
+const byId = id => collections.find(c=>c.id===id)
+    || {id, name:String(id), icon:initial(id), bg:avatarBg(id), floor:0, best:0, delta:0, supply:0, cat:'', tag:''};
 const fmt = n => Number(n).toLocaleString('ru-RU',{maximumFractionDigits:2});
 const usd = ton => '≈ $'+fmt(ton*TON_USD);
 
@@ -583,18 +612,38 @@ function validateSheet(){
             : `🏷️ Поставить оффер · ${fmt(total)} TON`);
     }
 }
-function submitOffer(){
+async function submitOffer(){
     const s = currentSheet;
-    const durMap = {'12ч':'12ч','1д':'1д','3д':'3д','7д':'7д'};
-    myOffers.unshift({id:Date.now(), col:s.col, price:s.price, qty:s.qty, status:'active', ends:durMap[s.dur]});
-    // списываем резерв с баланса (заглушка)
+    const btn = document.getElementById('submitOffer');
+
+    if(apiConnected){
+        // РЕАЛЬНЫЙ оффер на коллекцию: POST /collection-offers/
+        btn.disabled = true; btn.textContent = 'Отправка…';
+        try{
+            const expiration_days = (s.dur === '7д') ? 7 : 0; // API коллекц-офферов: 0 или 7
+            await api('collection-offers/', {method:'POST', body:{
+                amount: String(s.price),
+                collection_id: s.col,
+                expiration_days,
+                max_nfts: s.qty,
+            }});
+            haptic('success'); closeSheet(); toast('✅ Оффер отправлен на биржу');
+            await loadReal();   // перечитываем актуальные офферы/баланс
+        }catch(e){
+            haptic('error'); toast('⚠️ Ошибка: '+e.message);
+            btn.disabled=false; renderSheet();
+        }
+        return;
+    }
+
+    // ДЕМО-режим: локально
+    myOffers.unshift({id:Date.now(), col:s.col, price:s.price, qty:s.qty, status:'active', ends:s.dur});
     const bal = parseFloat(document.getElementById('balance').textContent) - (s.price*s.qty+0.05);
     document.getElementById('balance').textContent = fmt(bal);
     haptic('success');
     closeSheet();
-    toast('✅ Оффер поставлен');
+    toast('✅ Оффер поставлен (демо)');
     renderOffers();
-    // Реальная интеграция: tg.sendData(JSON.stringify({action:'offer',...s}))
     try{ tg?.sendData(JSON.stringify({action:'create_offer', collection:s.col, price:s.price, qty:s.qty, duration:s.dur})); }catch(e){}
 }
 function closeSheet(){ document.getElementById('offerOverlay').classList.remove('open'); }
@@ -607,7 +656,18 @@ function cancelOffer(id){
         tg.showConfirm('Отменить оффер и вернуть резерв?', ok=>{ if(ok) doCancel(o); });
     }else if(confirm('Отменить оффер?')){ doCancel(o); }
 }
-function doCancel(o){
+async function doCancel(o){
+    if(apiConnected){
+        try{
+            // индивидуальный оффер → /offers/{id}/cancel; коллекц-оффер → /collection-offers/cancel
+            if(o.nft_id) await api('offers/'+o.id+'/cancel', {method:'POST'});
+            else         await api('collection-offers/cancel', {method:'POST', body:{id:o.id}});
+            haptic('warning'); toast('Оффер отменён');
+            await loadReal();
+        }catch(e){ haptic('error'); toast('⚠️ '+e.message); }
+        return;
+    }
+    // демо
     const bal = parseFloat(document.getElementById('balance').textContent) + o.price*o.qty;
     document.getElementById('balance').textContent = fmt(bal);
     myOffers = myOffers.filter(x=>x.id!==o.id);
@@ -657,11 +717,91 @@ function toast(msg){
     toastTimer = setTimeout(()=>t.classList.remove('show'), 2200);
 }
 
+/* =========================================================================
+   ЗАГРУЗКА РЕАЛЬНЫХ ДАННЫХ через прокси (server.py).
+   Ответы Portals могут отличаться по именам полей — маппинг сделан
+   защитно (несколько вариантов ключей). После первого запуска с живым
+   токеном проверьте поля в DevTools и при необходимости поправьте здесь.
+   ========================================================================= */
+const pick = (o,...keys) => { for(const k of keys) if(o && o[k]!=null) return o[k]; return undefined; };
+
+function mapCollection(c){
+    const name = pick(c,'name','short_name','collection_name','title') ?? '—';
+    const floor = Number(pick(c,'floor_price','floor','floorPrice','min_price') ?? 0);
+    return {
+        id:    String(pick(c,'id','collection_id','short_name','name') ?? name),
+        name,
+        icon:  initial(name),
+        bg:    avatarBg(name),
+        floor,
+        best:  Number(pick(c,'top_offer','best_offer','highest_offer') ?? floor),
+        delta: Number(pick(c,'price_change_24h','change_24h','delta') ?? 0),
+        supply:Number(pick(c,'supply','listed_count','volume','count') ?? 0),
+        cat:'', tag:'',
+        real:true,
+    };
+}
+function mapOffer(o){
+    return {
+        id:     pick(o,'id','offer_id') ?? Date.now(),
+        col:    String(pick(o,'collection_id','collection','short_name','nft_collection') ?? ''),
+        price:  Number(pick(o,'offer_price','amount','price') ?? 0),
+        qty:    Number(pick(o,'max_nfts','quantity','qty') ?? 1),
+        status: (pick(o,'status') ?? 'active'),
+        ends:   pick(o,'expires_at','expiration','ends') ?? '—',
+        nft_id: pick(o,'nft_id'),
+    };
+}
+
+async function loadReal(){
+    // статус прокси
+    let st; try{ st = await fetch('/api/status').then(r=>r.json()); }catch(e){ st={connected:false}; }
+    if(!st.connected){ setMode(false); return; }
+
+    try{
+        const cols = await api('collections?limit=200');
+        const arr  = Array.isArray(cols) ? cols : (cols.collections || cols.data || []);
+        if(arr.length){ collections = arr.map(mapCollection); }
+
+        // баланс
+        try{
+            const w = await api('users/wallets/');
+            const bal = pick(w,'balance','ton_balance') ?? (Array.isArray(w)&&w[0]?.balance);
+            if(bal!=null) document.getElementById('balance').textContent = fmt(bal);
+        }catch(e){}
+
+        // мои офферы
+        try{
+            const off = await api('offers/placed?limit=100');
+            const oa  = Array.isArray(off) ? off : (off.offers || off.data || []);
+            myOffers = oa.map(mapOffer);
+        }catch(e){}
+
+        setMode(true);
+        renderChips(); renderMarket(); renderOffers();
+    }catch(e){
+        console.warn('API load failed, демо-режим:', e.message);
+        setMode(false);
+    }
+}
+
+function setMode(connected){
+    apiConnected = connected;
+    const sub = document.getElementById('subtitle');
+    if(connected){
+        sub.innerHTML = 'Маркет подарков · <span style="color:var(--green)">● онлайн</span>';
+    }else{
+        sub.innerHTML = 'Маркет подарков · <span style="color:var(--amber)">● демо</span>';
+    }
+}
+
 /* ---- Старт ---- */
 initTelegram();
+setMode(false);
 renderChips();
 renderMarket();
 renderOffers();
+loadReal();   // попытка подтянуть реальные данные; при неудаче остаёмся на моках
 </script>
 </body>
 </html>
