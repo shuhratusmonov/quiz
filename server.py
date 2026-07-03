@@ -43,13 +43,27 @@ from collections import deque
 from datetime import datetime
 
 PORT = int(os.environ.get("PORT", "8080"))
+STATIC_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Токен берётся из переменной окружения PORTALS_AUTH, а если её нет —
+# из файла token.txt рядом с сервером. Файл — самый надёжный способ на
+# Windows: cmd искажает токен из-за символов % (URL-кодирование).
 PORTALS_AUTH = os.environ.get("PORTALS_AUTH", "").strip()
+if not PORTALS_AUTH:
+    try:
+        with open(os.path.join(STATIC_DIR, "token.txt"), encoding="utf-8") as _f:
+            PORTALS_AUTH = _f.read().strip()
+    except FileNotFoundError:
+        pass
+# на случай, если скопировали строку целиком вместе с префиксом 'tma '
+if PORTALS_AUTH.lower().startswith("tma "):
+    PORTALS_AUTH = PORTALS_AUTH[4:].strip()
+
 AUTO_LIVE = os.environ.get("AUTO_LIVE", "") not in ("", "0", "false", "False")
 ENGINE_INTERVAL = int(os.environ.get("ENGINE_INTERVAL", "60"))   # сек между проверками
 RULE_COOLDOWN = int(os.environ.get("RULE_COOLDOWN", "600"))      # сек между срабатываниями одного правила
 
 UPSTREAM = "https://portals-market.com/api/"
-STATIC_DIR = os.path.dirname(os.path.abspath(__file__))
 RULES_FILE = os.path.join(STATIC_DIR, "rules.json")
 PROXY_PREFIX = "/portals-api/"
 

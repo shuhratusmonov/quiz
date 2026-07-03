@@ -1,6 +1,9 @@
 # Runtime state (auto-offer rules created at runtime)
 rules.json
 
+# Secret: Portals auth token (never commit)
+token.txt
+
 # Node / test artifacts
 node_modules/
 package.json
