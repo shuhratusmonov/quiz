@@ -453,7 +453,7 @@ function renderMarket(){
     const el = document.getElementById('marketList');
     if(!list.length){ el.innerHTML = `<div class="empty"><div class="ic">🔍</div><p>Ничего не найдено</p></div>`; return; }
     el.innerHTML = list.map(c=>`
-        <div class="gift" onclick="openOffer('${c.id}')">
+        <div class="gift" onclick="openCollection('${c.id}')">
             <div class="thumb" style="background:${c.bg}">${c.icon}</div>
             <div class="info">
                 <div class="name">${c.name} ${c.tag?`<span class="badge ${c.tag}">${c.tag==='hot'?'HOT':'NEW'}</span>`:''}</div>
@@ -701,6 +701,64 @@ function renderHistory(){
     }).join('');
 }
 
+/* ---- Экран моделей коллекции ---- */
+async function openCollection(id){
+    const c = byId(id);
+    haptic('light');
+    // в демо-режиме или без short_name — сразу лист оффера (моделей нет)
+    if(!apiConnected || !c.short){ openOffer(id); return; }
+
+    document.getElementById('offerSheet').innerHTML =
+        `<div class="grabber"></div><div style="text-align:center;padding:40px;color:var(--muted)">Загрузка моделей…</div>`;
+    document.getElementById('offerOverlay').classList.add('open');
+
+    let models = [];
+    try{
+        const r  = await api('collections/filters?short_names='+encodeURIComponent(c.short));
+        const cc = r.collections && r.collections[c.short];
+        models = (cc && cc.models) || [];
+    }catch(e){}
+    renderCollectionSheet(c, models);
+}
+function renderCollectionSheet(c, models){
+    const withFloor = models
+        .filter(m => m.floor_price != null)
+        .map(m => ({...m, f: Number(m.floor_price)}))
+        .sort((a,b) => a.f - b.f);
+
+    const rows = withFloor.map(m => `
+        <div onclick="offerForModel('${c.id}', ${m.f}, ${JSON.stringify(m.name)})"
+             style="display:flex;align-items:center;gap:11px;padding:9px;border:1px solid var(--line);border-radius:12px;margin-bottom:8px;cursor:pointer;">
+            <div style="width:44px;height:44px;border-radius:11px;flex-shrink:0;background:url('${m.url}') center/cover no-repeat, ${avatarBg(m.name)}"></div>
+            <div style="flex:1;min-width:0;">
+                <div style="font-weight:600;font-size:14px;">${m.name}</div>
+                <div style="font-size:12px;color:var(--muted);">на продаже: ${m.supply ?? '—'}</div>
+            </div>
+            <div style="text-align:right;font-weight:700;font-size:14px;white-space:nowrap;">
+                <span class="ton-ic">T</span> ${fmt(m.f)}
+            </div>
+        </div>`).join('');
+
+    document.getElementById('offerSheet').innerHTML = `
+        <div class="grabber"></div>
+        <div class="sh-head">
+            <div class="thumb" style="background:${c.bg}">${c.icon}</div>
+            <div><div class="n">${c.name}</div><div class="s">Флор ${fmt(c.floor)} TON · моделей: ${withFloor.length}</div></div>
+        </div>
+        <button class="cta" style="margin-bottom:14px;" onclick="openOffer('${c.id}')">🏷️ Оффер на всю коллекцию</button>
+        ${withFloor.length
+            ? `<div class="section-title" style="padding:2px 0 8px;">Модели по флору</div>${rows}`
+            : `<div style="color:var(--muted);font-size:13px;text-align:center;padding:24px;">Модели недоступны для этой коллекции</div>`}
+    `;
+}
+// оффер на всю коллекцию, но с ценой = флор выбранной модели
+function offerForModel(id, price, name){
+    openOffer(id);
+    currentSheet.price = price;
+    renderSheet();
+    toast('Цена по модели «'+name+'»');
+}
+
 /* ---- Лист оффера ---- */
 function openOffer(id){
     const c = byId(id);
@@ -887,6 +945,7 @@ function mapCollection(c, changes){
     if(changes && changes[id]!=null) delta = Number(changes[id]) * 100;
     return {
         id, name, img,
+        short: pick(c,'short_name','shortName') ?? id,   // нужен для загрузки моделей
         icon: img ? '' : initial(name),
         // реальная картинка подарка поверх цветной подложки (PNG прозрачные)
         bg:   img ? `url("${img}") center/cover no-repeat, ${avatarBg(name)}` : avatarBg(name),
