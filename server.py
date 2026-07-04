@@ -3,7 +3,7 @@
 Portals Offers — бэкенд-прокси + движок авто-офферов.
 
 Зачем нужен:
-  * Браузер не даёт мини-аппу напрямую дёргать https://portals-market.com/api/
+  * Браузер не даёт мини-аппу напрямую дёргать https://portal-market.com/api/
     (CORS). Прокси стоит на том же origin, что и страница, поэтому CORS нет.
   * Токен авторизации Portals (tma ...) хранится на сервере, а не в браузере.
   * Фоновый движок следит за флором и ставит офферы по правилам, даже когда
@@ -18,12 +18,12 @@ Portals Offers — бэкенд-прокси + движок авто-оффер�
 
 Где взять PORTALS_AUTH:
     web.telegram.org → откройте @portals → DevTools → вкладка Network →
-    любой запрос на portals-market.com → заголовок Authorization →
+    любой запрос на portal-market.com → заголовок Authorization →
     скопируйте всё ПОСЛЕ 'tma '. Токен живёт ~1-7 дней, потом обновить.
 
 Без токена страница работает в демо-режиме на мок-данных; движок простаивает.
 
-ВАЖНО: portals-market.com/api — неофициальный внутренний API. Он не
+ВАЖНО: portal-market.com/api — неофициальный внутренний API. Он не
 поддерживается Portals, может измениться в любой момент, а автоматические
 офферы могут нарушать правила площадки. Поэтому движок по умолчанию работает
 в режиме НАБЛЮДЕНИЯ (пишет «сработало бы», ничего не отправляя). Реальные
@@ -64,7 +64,7 @@ AUTO_LIVE = os.environ.get("AUTO_LIVE", "") not in ("", "0", "false", "False")
 ENGINE_INTERVAL = int(os.environ.get("ENGINE_INTERVAL", "60"))   # сек между проверками
 RULE_COOLDOWN = int(os.environ.get("RULE_COOLDOWN", "600"))      # сек между срабатываниями одного правила
 
-UPSTREAM = "https://portals-market.com/api/"
+UPSTREAM = "https://portal-market.com/api/"
 RULES_FILE = os.path.join(STATIC_DIR, "rules.json")
 PROXY_PREFIX = "/portals-api/"
 
@@ -95,8 +95,8 @@ def call_portals(method, path, body=None):
     req.add_header("Authorization", _auth_header())
     req.add_header("Content-Type", "application/json")
     req.add_header("Accept", "application/json")
-    req.add_header("Origin", "https://portals-market.com")
-    req.add_header("Referer", "https://portals-market.com/")
+    req.add_header("Origin", "https://portal-market.com")
+    req.add_header("Referer", "https://portal-market.com/")
     req.add_header("User-Agent", "Mozilla/5.0 (compatible; PortalsOffers/1.0)")
     with urllib.request.urlopen(req, context=_ssl_ctx, timeout=20) as r:
         raw = r.read()
@@ -259,8 +259,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         req.add_header("Authorization", _auth_header())
         req.add_header("Content-Type", "application/json")
         req.add_header("Accept", "application/json")
-        req.add_header("Origin", "https://portals-market.com")
-        req.add_header("Referer", "https://portals-market.com/")
+        req.add_header("Origin", "https://portal-market.com")
+        req.add_header("Referer", "https://portal-market.com/")
         req.add_header("User-Agent", "Mozilla/5.0 (compatible; PortalsOffers/1.0)")
         try:
             with urllib.request.urlopen(req, context=_ssl_ctx, timeout=20) as r:
