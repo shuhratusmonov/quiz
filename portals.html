@@ -720,17 +720,16 @@ async function openCollection(id){
     }catch(e){}
     renderCollectionSheet(c, models);
 }
-// запоминаем текущую коллекцию и её модели, чтобы кнопка «назад» не грузила заново
-let lastCol = null, lastModelsRaw = [], lastSorted = [];
+let lastCol = null, lastSorted = [];
 function renderCollectionSheet(c, models){
-    lastCol = c; lastModelsRaw = models;
+    lastCol = c;
     lastSorted = models
         .filter(m => m.floor_price != null)
         .map(m => ({...m, f: Number(m.floor_price)}))
         .sort((a,b) => a.f - b.f);
 
     const rows = lastSorted.map((m, i) => `
-        <div onclick="showModel(${i})"
+        <div onclick="openModelOffer(${i})"
              style="display:flex;align-items:center;gap:11px;padding:9px;border:1px solid var(--line);border-radius:12px;margin-bottom:8px;cursor:pointer;">
             <div style="width:44px;height:44px;border-radius:11px;flex-shrink:0;background:url('${m.url}') center/cover no-repeat, ${avatarBg(m.name)}"></div>
             <div style="flex:1;min-width:0;">
@@ -754,43 +753,24 @@ function renderCollectionSheet(c, models){
             : `<div style="color:var(--muted);font-size:13px;text-align:center;padding:24px;">Модели недоступны для этой коллекции</div>`}
     `;
 }
-// карточка выбранной модели в этом же окне
-function showModel(i){
+// тап по модели → окно оффера с данными этой модели вверху
+function openModelOffer(i){
     const m = lastSorted[i];
     if(!m) return;
     haptic('light');
-    const c = lastCol;
-    document.getElementById('offerSheet').innerHTML = `
-        <div class="grabber"></div>
-        <button onclick="backToModels()" style="background:none;border:none;color:var(--accent);font-size:14px;font-weight:600;cursor:pointer;padding:2px 0 12px;">‹ К моделям</button>
-        <div style="text-align:center;margin-bottom:16px;">
-            <div style="width:150px;height:150px;margin:0 auto 12px;border-radius:22px;background:url('${m.url}') center/cover no-repeat, ${avatarBg(m.name)}"></div>
-            <div style="font-size:21px;font-weight:800;">${m.name}</div>
-            <div style="font-size:13px;color:var(--muted);margin-top:3px;">${c.name}</div>
-        </div>
-        <div class="summary">
-            <div class="row"><span class="k">Флор модели</span><span class="v">${fmt(m.f)} TON</span></div>
-            <div class="row"><span class="k">В долларах</span><span class="v">${usd(m.f)}</span></div>
-            <div class="row"><span class="k">На продаже</span><span class="v">${m.supply ?? '—'} шт</span></div>
-            <div class="row total"><span class="k">Флор коллекции</span><span class="v">${fmt(c.floor)} TON</span></div>
-        </div>
-        <button class="cta" onclick="offerForModel('${c.id}', ${m.f})">🏷️ Оффер по цене ${fmt(m.f)} TON</button>
-    `;
-}
-function backToModels(){ haptic('light'); renderCollectionSheet(lastCol, lastModelsRaw); }
-
-// оффер на всю коллекцию, но с ценой = флор выбранной модели
-function offerForModel(id, price){
-    openOffer(id);
-    currentSheet.price = price;
+    currentSheet = {col:lastCol.id, price:m.f, qty:1, dur:'3д', model:m};
     renderSheet();
-    toast('Цена подставлена по флору модели');
+}
+// вернуться к списку моделей (из окна оффера по модели)
+function backToModels(){
+    haptic('light');
+    if(lastCol) renderCollectionSheet(lastCol, lastSorted);
 }
 
 /* ---- Лист оффера ---- */
 function openOffer(id){
     const c = byId(id);
-    currentSheet = {col:id, price:c.best, qty:1, dur:'3д'};
+    currentSheet = {col:id, price:c.best, qty:1, dur:'3д', model:null};
     haptic('light');
     renderSheet();
     document.getElementById('offerOverlay').classList.add('open');
@@ -798,12 +778,21 @@ function openOffer(id){
 function renderSheet(){
     const c = byId(currentSheet.col);
     const s = currentSheet;
+    const m = s.model;   // выбранная модель (если оффер по модели)
     const total = s.price * s.qty;
+    // шапка: если выбрана модель — показываем её, иначе коллекцию
+    const headBg   = m ? `url("${m.url}") center/cover no-repeat, ${avatarBg(m.name)}` : c.bg;
+    const headIcon = m ? '' : c.icon;
+    const headName = m ? m.name : c.name;
+    const headSub  = m
+        ? `${c.name} · модель · флор ${fmt(m.f)} TON${m.supply!=null?` · на продаже ${m.supply}`:''}`
+        : `Флор ${fmt(c.floor)} TON · лучший бид ${fmt(c.best)} TON`;
     document.getElementById('offerSheet').innerHTML = `
         <div class="grabber"></div>
+        ${m ? `<button onclick="backToModels()" style="background:none;border:none;color:var(--accent);font-size:14px;font-weight:600;cursor:pointer;padding:2px 0 10px;">‹ К моделям</button>` : ``}
         <div class="sh-head">
-            <div class="thumb" style="background:${c.bg}">${c.icon}</div>
-            <div><div class="n">${c.name}</div><div class="s">Флор ${fmt(c.floor)} TON · лучший бид ${fmt(c.best)} TON</div></div>
+            <div class="thumb" style="background:${headBg}">${headIcon}</div>
+            <div><div class="n">${headName}</div><div class="s">${headSub}</div></div>
         </div>
 
         <div class="field">
