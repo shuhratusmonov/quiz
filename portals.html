@@ -876,18 +876,24 @@ function toast(msg){
    ========================================================================= */
 const pick = (o,...keys) => { for(const k of keys) if(o && o[k]!=null) return o[k]; return undefined; };
 
-function mapCollection(c){
+function mapCollection(c, changes){
     const name = pick(c,'name','short_name','collection_name','title') ?? '—';
     const floor = Number(pick(c,'floor_price','floor','floorPrice','min_price') ?? 0);
+    const id = String(pick(c,'id','collection_id','short_name','name') ?? name);
+    const img = pick(c,'photo_url','image','icon_url','logo_url');
+    // изменение цены за 24ч: в ответе Portals это отдельная карта floor_changes
+    // с дробями (-0.0179 = -1.79%)
+    let delta = Number(pick(c,'price_change_24h','change_24h','delta') ?? 0);
+    if(changes && changes[id]!=null) delta = Number(changes[id]) * 100;
     return {
-        id:    String(pick(c,'id','collection_id','short_name','name') ?? name),
-        name,
-        icon:  initial(name),
-        bg:    avatarBg(name),
+        id, name, img,
+        icon: img ? '' : initial(name),
+        // реальная картинка подарка поверх цветной подложки (PNG прозрачные)
+        bg:   img ? `url("${img}") center/cover no-repeat, ${avatarBg(name)}` : avatarBg(name),
         floor,
         best:  Number(pick(c,'top_offer','best_offer','highest_offer') ?? floor),
-        delta: Number(pick(c,'price_change_24h','change_24h','delta') ?? 0),
-        supply:Number(pick(c,'supply','listed_count','volume','count') ?? 0),
+        delta: Number(delta.toFixed(1)),
+        supply:Number(pick(c,'listed_count','supply','count') ?? 0),
         cat:'', tag:'',
         real:true,
     };
@@ -912,7 +918,8 @@ async function loadReal(){
     try{
         const cols = await api('collections?limit=200');
         const arr  = Array.isArray(cols) ? cols : (cols.collections || cols.data || []);
-        if(arr.length){ collections = arr.map(mapCollection); }
+        const changes = (cols && cols.floor_changes) || {};
+        if(arr.length){ collections = arr.map(c => mapCollection(c, changes)); }
 
         // баланс
         try{
