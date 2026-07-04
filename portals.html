@@ -727,7 +727,7 @@ function renderCollectionSheet(c, models){
         .sort((a,b) => a.f - b.f);
 
     const rows = withFloor.map(m => `
-        <div onclick="offerForModel('${c.id}', ${m.f}, ${JSON.stringify(m.name)})"
+        <div onclick="offerForModel('${c.id}', ${m.f})"
              style="display:flex;align-items:center;gap:11px;padding:9px;border:1px solid var(--line);border-radius:12px;margin-bottom:8px;cursor:pointer;">
             <div style="width:44px;height:44px;border-radius:11px;flex-shrink:0;background:url('${m.url}') center/cover no-repeat, ${avatarBg(m.name)}"></div>
             <div style="flex:1;min-width:0;">
@@ -752,11 +752,11 @@ function renderCollectionSheet(c, models){
     `;
 }
 // оффер на всю коллекцию, но с ценой = флор выбранной модели
-function offerForModel(id, price, name){
+function offerForModel(id, price){
     openOffer(id);
     currentSheet.price = price;
     renderSheet();
-    toast('Цена по модели «'+name+'»');
+    toast('Цена подставлена по флору модели');
 }
 
 /* ---- Лист оффера ---- */
